@@ -40,15 +40,13 @@ class static_thread_pool
     static_thread_pool& query(execution::context_t) const noexcept { return *pool_; }
 
     // Blocking modes.
-    executor_impl<execution::never_blocking_t, Continuation, Work, ProtoAllocator>
-      require(execution::never_blocking_t) const { return {pool_, allocator_}; };
-    executor_impl<execution::possibly_blocking_t, Continuation, Work, ProtoAllocator>
-      require(execution::possibly_blocking_t) const { return {pool_, allocator_}; };
-    executor_impl<execution::always_blocking_t, Continuation, Work, ProtoAllocator>
-      require(execution::always_blocking_t) const { return {pool_, allocator_}; };
-    bool query(execution::never_blocking_t) const { return is_same<Blocking, execution::never_blocking_t>::value; }
-    bool query(execution::possibly_blocking_t) const { return is_same<Blocking, execution::possibly_blocking_t>::value; }
-    bool query(execution::always_blocking_t) const { return is_same<Blocking, execution::always_blocking_t>::value; }
+    executor_impl<execution::blocking_t::never_t, Continuation, Work, ProtoAllocator>
+      require(execution::blocking_t::never_t) const { return {pool_, allocator_}; };
+    executor_impl<execution::blocking_t::possibly_t, Continuation, Work, ProtoAllocator>
+      require(execution::blocking_t::possibly_t) const { return {pool_, allocator_}; };
+    executor_impl<execution::blocking_t::always_t, Continuation, Work, ProtoAllocator>
+      require(execution::blocking_t::always_t) const { return {pool_, allocator_}; };
+    static constexpr auto query(Blocking) { return execution::blocking_t{Blocking{}}; }
 
     // Continuation hint.
     executor_impl<Blocking, execution::continuation_t, Work, ProtoAllocator>
@@ -118,7 +116,7 @@ class static_thread_pool
   };
 
 public:
-  using executor_type = executor_impl<execution::possibly_blocking_t, execution::not_continuation_t, execution::not_outstanding_work_t, std::allocator<void>>;
+  using executor_type = executor_impl<execution::blocking_t::possibly_t, execution::not_continuation_t, execution::not_outstanding_work_t, std::allocator<void>>;
 
   explicit static_thread_pool(std::size_t threads)
   {
@@ -271,7 +269,7 @@ private:
   template<class Blocking, class Continuation, class ProtoAllocator, class Function>
   void execute(Blocking, Continuation, const ProtoAllocator& alloc, Function f)
   {
-    if (std::is_same<Blocking, execution::possibly_blocking_t>::value)
+    if (std::is_same<Blocking, execution::blocking_t::possibly_t>::value)
     {
       // Run immediately if already in the pool.
       if (thread_private_state* private_state = thread_private_state::instance())
@@ -308,7 +306,7 @@ private:
   }
 
   template<class Continuation, class ProtoAllocator, class Function>
-  void execute(execution::always_blocking_t, Continuation, const ProtoAllocator& alloc, Function f)
+  void execute(execution::blocking_t::always_t, Continuation, const ProtoAllocator& alloc, Function f)
   {
     // Run immediately if already in the pool.
     if (thread_private_state* private_state = thread_private_state::instance())
@@ -323,7 +321,7 @@ private:
     // Otherwise, wrap the function with a promise that, when broken, will signal that the function is complete.
     promise<void> promise;
     future<void> future = promise.get_future();
-    this->execute(execution::never_blocking, Continuation{}, alloc, [f = std::move(f), p = std::move(promise)]() mutable { f(); });
+    this->execute(execution::blocking_t::never, Continuation{}, alloc, [f = std::move(f), p = std::move(promise)]() mutable { f(); });
     future.wait();
   }
 
@@ -382,13 +380,13 @@ private:
   }
 
   template<class Continuation, class ProtoAllocator, class Function, class SharedFactory>
-  void bulk_execute(execution::always_blocking_t, Continuation, const ProtoAllocator& alloc, Function f, std::size_t n, SharedFactory sf)
+  void bulk_execute(execution::blocking_t::always_t, Continuation, const ProtoAllocator& alloc, Function f, std::size_t n, SharedFactory sf)
   {
     // Wrap the function with a promise that, when broken, will signal that the function is complete.
     promise<void> promise;
     future<void> future = promise.get_future();
     auto wrapped_f = [f = std::move(f), p = std::move(promise)](std::size_t n, auto& s) mutable { f(n, s); };
-    this->bulk_execute(execution::never_blocking, Continuation{}, alloc, std::move(wrapped_f), n, std::move(sf));
+    this->bulk_execute(execution::blocking_t::always, Continuation{}, alloc, std::move(wrapped_f), n, std::move(sf));
     future.wait();
   }
 
@@ -476,9 +474,9 @@ private:
   }
 
   template<class Blocking, class Continuation, class ProtoAllocator, class Function, class ResultFactory, class SharedFactory>
-  auto bulk_twoway_execute(execution::always_blocking_t, Continuation, const ProtoAllocator& alloc, Function f, std::size_t n, ResultFactory rf, SharedFactory sf)
+  auto bulk_twoway_execute(execution::blocking_t::always_t, Continuation, const ProtoAllocator& alloc, Function f, std::size_t n, ResultFactory rf, SharedFactory sf)
   {
-    auto future = this->bulk_twoway_execute(execution::never_blocking, Continuation{}, alloc, std::move(f), n, std::move(rf), std::move(sf));
+    auto future = this->bulk_twoway_execute(execution::blocking_t::never, Continuation{}, alloc, std::move(f), n, std::move(rf), std::move(sf));
     future.wait();
     return future;
   }

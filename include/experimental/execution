@@ -52,9 +52,7 @@ struct single_t;
 struct bulk_t;
 
 // Blocking behaviour.
-struct never_blocking_t;
-struct possibly_blocking_t;
-struct always_blocking_t;
+struct blocking_t;
 
 // Allow adaptation of blocking and directionality (e.g. twoway in terms of oneway).
 struct adaptable_blocking_t;
