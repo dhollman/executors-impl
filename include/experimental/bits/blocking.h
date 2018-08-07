@@ -78,7 +78,7 @@ private:
       future<void> future = promise.get_future();
 
       std::forward<ExecutorDeduced>(ex).execute(
-        blocking_t_impl::_make_blocking_continuation(forward<Continuation>(c), move(promise));
+        blocking_t_impl::_make_blocking_continuation(forward<Continuation>(c), move(promise))
       );
       future.wait();
     }
