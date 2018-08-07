@@ -1,6 +1,8 @@
 #ifndef STD_EXPERIMENTAL_BITS_CONTEXT_H
 #define STD_EXPERIMENTAL_BITS_CONTEXT_H
 
+#include <any>
+
 namespace std {
 namespace experimental {
 inline namespace executors_v1 {
@@ -13,7 +15,7 @@ struct property_base
   static constexpr bool is_requirable = false;
   static constexpr bool is_preferable = false;
 
-  //using polymorphic_query_result_type = ?;
+  using polymorphic_query_result_type = std::any;
 
   template<class Executor, class Type = decltype(Executor::query(*static_cast<Derived*>(0)))>
     static constexpr Type static_query_v = Executor::query(Derived());

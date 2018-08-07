@@ -23,41 +23,29 @@ struct blocking_adaptation_t :
 private:
   template <typename Executor>
   class adapter :
-    public impl::enumerator_adapter<adapter,
-      Executor, blocking_adaptation_t, allowed_t>
+    public impl::trivial_adapter_mixin<
+      Executor,
+      impl::enumerator_adapter<adapter, Executor, blocking_adaptation_t, allowed_t>
+    >
   {
-    template <class T> static auto inner_declval() -> decltype(std::declval<Executor>());
+    using base_t =
+      impl::trivial_adapter_mixin<
+        Executor,
+        impl::enumerator_adapter<adapter, Executor, blocking_adaptation_t, allowed_t>
+      >;
+
+    template <typename ExecutorDeduced, typename OldExecutor>
+    adapter(ExecutorDeduced&& ex, adapter<OldExecutor>&& old)
+      : base_t(std::forward<ExecutorDeduced>(ex))
+    { }
+
+    template <template <class> class, class>
+    friend class impl::adapter;
 
   public:
-    using impl::enumerator_adapter<adapter, Executor,
-      blocking_adaptation_t, allowed_t>::enumerator_adapter;
 
-    template<class Function> auto execute(Function f) const
-      -> decltype(inner_declval<Function>().execute(std::move(f)))
-    {
-      return this->executor_.execute(std::move(f));
-    }
+    using base_t::base_t;
 
-    template<class Function>
-    auto twoway_execute(Function f) const
-      -> decltype(inner_declval<Function>().twoway_execute(std::move(f)))
-    {
-      return this->executor_.twoway_execute(std::move(f));
-    }
-
-    template<class Function, class SharedFactory>
-    auto bulk_execute(Function f, std::size_t n, SharedFactory sf) const
-      -> decltype(inner_declval<Function>().bulk_execute(std::move(f), n, std::move(sf)))
-    {
-      return this->executor_.bulk_execute(std::move(f), n, std::move(sf));
-    }
-
-    template<class Function, class ResultFactory, class SharedFactory>
-    auto bulk_twoway_execute(Function f, std::size_t n, ResultFactory rf, SharedFactory sf) const
-      -> decltype(inner_declval<Function>().bulk_twoway_execute(std::move(f), n, std::move(rf), std::move(sf)))
-    {
-      return this->executor_.bulk_twoway_execute(std::move(f), n, std::move(rf), std::move(sf));
-    }
   };
 
 public:

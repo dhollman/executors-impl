@@ -5,3 +5,4 @@ macro(add_example name sources)
 endmacro()
 
 add_subdirectory(adapter)
+add_subdirectory(then_adapter)

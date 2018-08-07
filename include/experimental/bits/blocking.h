@@ -2,14 +2,54 @@
 #define STD_EXPERIMENTAL_BITS_BLOCKING_H
 
 #include <experimental/bits/blocking_adaptation.h>
+#include <experimental/bits/helpers.h>
 #include <experimental/bits/enumeration.h>
 #include <experimental/bits/enumerator_adapter.h>
 #include <future>
+#include <any>
 
 namespace std {
 namespace experimental {
 inline namespace executors_v1 {
 namespace execution {
+
+namespace blocking_t_impl {
+
+template <typename Continuation, typename Promise>
+auto _make_blocking_continuation(Continuation&& c, Promise&& p) {
+  return execution::make_continuation(
+    // Value handler
+    [](auto&& val, auto&& subex, auto&& con, auto&& prom) {
+      if constexpr (is_same_v<decay_t<decltype(val)>, monostate>) {
+        auto rv = std::move(con).value(forward<decltype(subex)>(subex));
+        std::move(prom).set_value();
+        return rv;
+      }
+      else /* constexpr (not void continuation) */ {
+        auto rv = std::move(con).value(forward<decltype(val)>(val), forward<decltype(subex)>(subex));
+        std::move(prom).set_value();
+        return rv;
+      }
+    },
+    // Error handler
+    [](auto&& err, auto&& subex, auto&& con, auto&& prom) {
+      auto rv = std::move(con).error(forward<decltype(err)>(err), forward<decltype(subex)>(subex));
+      std::move(prom).set_value();
+      return rv;
+    },
+    // Args
+    forward<Continuation>(c),
+    forward<Promise>(p)
+  );
+}
+
+struct any_then_value_executor {
+  std::any value;
+
+
+};
+
+} // end namespace blocking_t_impl
 
 struct blocking_t :
   impl::enumeration<blocking_t, 3>
@@ -31,44 +71,26 @@ private:
   {
     template <class T> static auto inner_declval() -> decltype(std::declval<Executor>());
 
+
+    template <typename ExecutorDeduced, typename Continuation>
+    static auto _do_execute(ExecutorDeduced&& ex, Continuation&& c) {
+      promise<void> promise;
+      future<void> future = promise.get_future();
+
+      std::forward<ExecutorDeduced>(ex).execute(
+        blocking_t_impl::_make_blocking_continuation(forward<Continuation>(c), move(promise));
+      );
+      future.wait();
+    }
+
   public:
     using impl::enumerator_adapter<adapter, Executor, blocking_t, always_t>::enumerator_adapter;
 
-    template<class Function> auto execute(Function f) const
-      -> decltype(inner_declval<Function>().execute(std::move(f)))
+    template<class Continuation>
+    auto execute(Continuation&& c) &&
+      -> decltype(inner_declval<Continuation>().execute(std::forward<Continuation>(c)))
     {
-      promise<void> promise;
-      future<void> future = promise.get_future();
-      this->executor_.execute([f = std::move(f), p = std::move(promise)]() mutable { f(); });
-      future.wait();
-    }
-
-    template<class Function>
-    auto twoway_execute(Function f) const
-      -> decltype(inner_declval<Function>().twoway_execute(std::move(f)))
-    {
-      auto future = this->executor_.twoway_execute(std::move(f));
-      future.wait();
-      return future;
-    }
-
-    template<class Function, class SharedFactory>
-    auto bulk_execute(Function f, std::size_t n, SharedFactory sf) const
-      -> decltype(inner_declval<Function>().bulk_execute(std::move(f), n, std::move(sf)))
-    {
-      promise<void> promise;
-      future<void> future = promise.get_future();
-      this->executor_.bulk_execute([f = std::move(f), p = std::move(promise)](auto i, auto& s) mutable { f(i, s); }, n, std::move(sf));
-      future.wait();
-    }
-
-    template<class Function, class ResultFactory, class SharedFactory>
-    auto bulk_twoway_execute(Function f, std::size_t n, ResultFactory rf, SharedFactory sf) const
-      -> decltype(inner_declval<Function>().bulk_twoway_execute(std::move(f), n, std::move(rf), std::move(sf)))
-    {
-      auto future = this->executor_.bulk_twoway_execute(std::move(f), n, std::move(rf), std::move(sf));
-      future.wait();
-      return future;
+      _do_execute(std::move(this->executor_), forward<Continuation>(c));
     }
   };
 

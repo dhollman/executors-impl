@@ -5,27 +5,79 @@
 #include <experimental/bits/query_static_member_traits.h>
 #include <experimental/bits/require_member_traits.h>
 
+#include <utility>
+
 namespace std {
 namespace experimental {
 inline namespace executors_v1 {
 namespace execution {
 namespace impl {
 
+template <typename Executor, typename Base>
+class trivial_adapter_mixin : public Base
+{
+  private:
+    using base_t = Base;
+    template <class T> static auto inner_declval() -> decltype(std::declval<Executor>());
+
+  public:
+
+    using base_t::base_t;
+
+    template<class Continuation>
+    auto execute(Continuation&& c) const &
+    -> decltype(inner_declval<Continuation>().execute(std::forward<Continuation&&>(c)))
+    {
+      return this->executor_.execute(c);
+    }
+
+    template<class Continuation>
+    auto execute(Continuation&& c) &&
+    -> decltype(inner_declval<Continuation>().execute(std::forward<Continuation&&>(c)))
+    {
+      return std::move(this->executor_).execute(std::forward<Continuation>(c));
+    }
+
+    template<class Continuation>
+    auto then_execute(Continuation&& c) const &
+    -> decltype(inner_declval<Continuation>().then_execute(std::forward<Continuation>(c)))
+    {
+      return std::move(this->executor_).then_execute(std::forward<Continuation>(c));
+    }
+
+    template<class Continuation>
+    auto then_execute(Continuation&& c) &&
+    -> decltype(inner_declval<Continuation>().then_execute(std::forward<Continuation>(c)))
+    {
+      return std::move(this->executor_).then_execute(std::forward<Continuation>(c));
+    }
+
+};
+
 template<template<class> class Derived, class Executor>
 class adapter
 {
 public:
+  adapter(adapter&&) noexcept = default;
   adapter(Executor ex)
     : executor_(std::move(ex))
-  {
-  }
+  { }
 
   template<class Property>
-  constexpr auto require(const Property& p) const
+  constexpr auto require(const Property& p) const &
     noexcept(require_member_traits<Executor, Property>::is_noexcept)
     -> Derived<typename require_member_traits<Executor, Property>::result_type>
   {
-    return Derived<decltype(executor_.require(p))>(executor_.require(p));
+    return Derived<decltype(executor_.require(p))>(executor_.require(p), *this);
+  }
+
+  template<class Property>
+  constexpr auto require(const Property& p) &&
+    noexcept(require_member_traits<Executor, Property>::is_noexcept)
+    -> Derived<typename require_member_traits<Executor, Property>::result_type>
+  {
+    return Derived<decltype(executor_.require(p))>(executor_.require(p),
+      static_cast<Derived<Executor>&&>(std::move(*this)));
   }
 
   template<class Property>
