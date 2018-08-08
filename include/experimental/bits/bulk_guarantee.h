@@ -49,8 +49,6 @@ private:
   public:
 
     using base_t::base_t;
-    using base_t::execute;
-    using base_t::then_execute;
 
   };
 

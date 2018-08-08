@@ -64,10 +64,10 @@ private:
   ErrorCallable error_c_; // [[no_unique_address]]
   tuple<Args...> args_; // [[no_unique_address]]
 
-  template <class Callable, class Arg, class SubEx, size_t... Idxs>
-  auto _do_call(Callable&& c, Arg&& v, SubEx&& ex, index_sequence<Idxs...>) {
+  template <class Callable, class Arg, size_t... Idxs>
+  auto _do_call(Callable&& c, Arg&& v, index_sequence<Idxs...>) {
     return forward<Callable>(c)(
-      forward<Arg>(v), forward<SubEx>(ex),
+      forward<Arg>(v),
       std::get<Idxs>(std::move(args_))...
     );
   }
@@ -90,18 +90,17 @@ public:
       args_(forward<Args...>(args)...)
   { }
 
-  template <class SubEx>
-  auto value(SubEx&& ex) && {
-    return _do_call(std::move(value_c_), TypeForVoid{}, forward<SubEx>(ex), index_sequence_for<Args...>{});
+  auto value() && {
+    return _do_call(std::move(value_c_), TypeForVoid{}, index_sequence_for<Args...>{});
   }
-  template <class Value, class SubEx>
-  auto value(Value&& v, SubEx&& ex) && {
-    return _do_call(std::move(value_c_), forward<Value>(v), forward<SubEx>(ex), index_sequence_for<Args...>{});
+  template <class Value>
+  auto value(Value&& v) && {
+    return _do_call(std::move(value_c_), forward<Value>(v), index_sequence_for<Args...>{});
   }
 
-  template <class Error, class SubEx>
-  auto error(Error&& e, SubEx&& ex) && {
-    return _do_call(std::move(error_c_), forward<Error>(e), forward<SubEx>(ex), index_sequence_for<Args...>{});
+  template <class Error>
+  auto error(Error&& e) && {
+    return _do_call(std::move(error_c_), forward<Error>(e), index_sequence_for<Args...>{});
   }
 
 };
@@ -122,12 +121,11 @@ continuation_with_args_impl(
 template <typename F>
 struct on_void {
   F f;
-  template <typename SubEx>
-  auto value(SubEx&&) && {
+  auto value() && {
     return std::move(f)();
   }
-  template <typename E, typename SubEx>
-  auto error(E&& e, SubEx) && {
+  template <typename E>
+  auto error(E&& e) && {
     return std::forward<E>(e);
   }
 };
@@ -138,16 +136,15 @@ on_void(F f) -> on_void<F>;
 template <typename F>
 struct on_value {
   F f;
-  template <typename SubEx>
-  auto value(SubEx&&) && {
+  auto value() && {
     return std::move(f)(std::monostate{});
   }
-  template <typename Value, typename SubEx>
-  auto value(Value&& v, SubEx&&) && {
+  template <typename Value>
+  auto value(Value&& v) && {
     return std::move(f)(std::forward<Value>(v));
   }
-  template <typename E, typename SubEx>
-  auto error(E&& e, SubEx) && {
+  template <typename E>
+  auto error(E&& e) && {
     return std::forward<E>(e);
   }
 };
@@ -157,55 +154,20 @@ on_value(F f) -> on_value<F>;
 template <typename F>
 struct on_error {
   F f;
-  template <typename SubEx>
-  auto value(SubEx&&) && {
+  auto value() && {
     return;
   }
-  template <typename Value, typename SubEx>
-  auto value(Value&& v, SubEx&&) && {
+  template <typename Value>
+  auto value(Value&& v) && {
     return std::forward<Value>(v);
   }
-  template <typename E, typename SubEx>
-  auto error(E&& e, SubEx) && {
+  template <typename E>
+  auto error(E&& e) && {
     return std::move(f)(std::forward<E>(e));
   }
 };
 template <typename F>
 on_error(F f) -> on_error<F>;
-
-template <typename F>
-struct on_value_with_subexecutor {
-  F f;
-  template <typename Value, typename SubEx>
-  auto value(Value&& v, SubEx&& ex) && {
-    return std::move(f)(std::forward<Value>(v), std::forward<SubEx>(ex));
-  }
-  template <typename E, typename SubEx>
-  auto error(E&& e, SubEx&& ex) && {
-    return std::forward<E>(e);
-  }
-};
-template <typename F>
-on_value_with_subexecutor(F f) -> on_value_with_subexecutor<F>;
-
-template <typename F>
-struct on_error_with_subexecutor {
-  F f;
-  template <typename SubEx>
-  auto value(SubEx&&) && {
-    return;
-  }
-  template <typename Value, typename SubEx>
-  auto value(Value&& v, SubEx&& ex) && {
-    return forward<Value>(v);
-  }
-  template <typename E, typename SubEx>
-  auto error(E&& e, SubEx&& ex) && {
-    return std::move(f)(std::forward<E>(e), std::forward<SubEx>(ex));
-  }
-};
-template <typename F>
-on_error_with_subexecutor(F f) -> on_error_with_subexecutor<F>;
 
 } // end namespace helpers_impl
 
@@ -228,19 +190,9 @@ inline auto on_value(UnaryCallable&& nc) {
   return helpers_impl::on_value{std::forward<UnaryCallable>(nc)};
 }
 
-template <class BinaryCallable>
-inline auto on_value_with_subexecutor(BinaryCallable&& nc) {
-  return helpers_impl::on_value_with_subexecutor{std::forward<BinaryCallable>(nc)};
-}
-
 template <class UnaryCallable>
 inline auto on_error(UnaryCallable&& nc) {
   return helpers_impl::on_error{std::forward<UnaryCallable>(nc)};
-}
-
-template <class BinaryCallable>
-inline auto on_error_with_subexecutor(BinaryCallable&& nc) {
-  return helpers_impl::on_error_with_subexecutor{std::forward<BinaryCallable>(nc)};
 }
 
 } // end namespace execution

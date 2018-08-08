@@ -76,20 +76,19 @@ struct mapping_t;
 // Memory allocations.
 template<class ProtoAllocator> struct allocator_t;
 
-template<class VSubEx=void, class ESubEx=void>
 struct then_t;
 
 // Type traits to determine conformance to executor type requirements.
-template<class Executor, class T, class E, typename R, typename S, class VSubEx, class ESubEx> struct is_continuation;
-template<class Executor, class T, class E, class VSubEx, class ESubEx> struct is_executor;
-template<class Executor, class T, class E, class VSubEx, class ESubEx> struct is_then_executor;
+template<class Executor, class T, class E, typename R, typename S> struct is_continuation;
+template<class Executor, class T, class E> struct is_executor;
+template<class Executor, class T, class E> struct is_then_executor;
 
-template<class Executor, class T, class E, typename R, typename S, class VSubEx, class ESubEx>
-constexpr bool is_continuation_v = is_continuation<Executor, T, E, R, S, VSubEx, ESubEx>::value;
-template<class Executor, class T=void, class E=exception_ptr, class VSubEx=Executor, class ESubEx=Executor>
-constexpr bool is_executor_v = is_executor<Executor, T, E, VSubEx, ESubEx>::value;
-template<class Executor, class T=void, class E=exception_ptr, class R=void, class S=exception_ptr, class VSubEx=Executor, class ESubEx=Executor, class RetEx=Executor>
-constexpr bool is_then_executor_v = is_then_executor<Executor, T, E, VSubEx, ESubEx>::value;
+template<class Executor, class T, class E, typename R, typename S>
+constexpr bool is_continuation_v = is_continuation<Executor, T, E, R, S>::value;
+template<class Executor, class T=void, class E=exception_ptr>
+constexpr bool is_executor_v = is_executor<Executor, T, E>::value;
+template<class Executor, class T=void, class E=exception_ptr, class R=void, class S=exception_ptr>
+constexpr bool is_then_executor_v = is_then_executor<Executor, T, E>::value;
 
 template <typename Executor>
 struct executor_value;
@@ -117,14 +116,8 @@ auto on_void(NullaryCallable&& nc);
 template <class UnaryCallable>
 auto on_value(UnaryCallable&& nc);
 
-template <class BinaryCallable>
-auto on_value_with_subexecutor(BinaryCallable&& nc);
-
 template <class UnaryCallable>
 inline auto on_error(UnaryCallable&& nc);
-
-template <class BinaryCallable>
-inline auto on_error_with_subexecutor(BinaryCallable&& nc);
 
 } // namespace execution
 } // inline namespace executors_v1

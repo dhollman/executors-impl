@@ -16,12 +16,11 @@ namespace then_impl {
 
 // Used for "kicking off" chain
 struct _trivial_continuation {
-  template <typename SubExec>
-  inline constexpr auto value(SubExec&&) noexcept { }
-  template <typename Value, typename SubExec>
-  inline constexpr auto value(Value&& v, SubExec&&) noexcept { return std::forward<Value>(v); }
-  template <typename Error, typename SubExec>
-  inline constexpr auto error(Error&& e, SubExec&&) noexcept { return std::forward<Error>(e); }
+  inline constexpr auto value() noexcept { }
+  template <typename Value>
+  inline constexpr auto value(Value&& v) noexcept { return std::forward<Value>(v); }
+  template <typename Error>
+  inline constexpr auto error(Error&& e) noexcept { return std::forward<Error>(e); }
 };
 
 
@@ -45,22 +44,23 @@ struct adapted_then_continuation {
         cc_(forward<ContinuationDeduced>(cc))
     { }
 
-    template <class Value, class SubEx>
-    auto value(Value&& val, SubEx subex) {
-      if constexpr (!is_void_v<decay_t<decltype(declval<PrevContinuation&&>().value(declval<Value&&>(), declval<SubEx>()))>>) {
+    template <class Value>
+    auto value(Value&& val) {
+      using prev_value_t = decay_t<decltype(declval<PrevContinuation&&>().value(declval<Value&&>()))>;
+      if constexpr (!is_void_v<prev_value_t>) {
         if constexpr(!is_same_v<PrevContinuation, _trivial_continuation>) {
-          optional<decay_t<decltype(std::move(pc_).value(forward<Value>(val), subex))>> nextval;
+          optional<prev_value_t> nextval;
           try {
-            nextval = std::move(pc_).value(forward<Value>(val), subex);
+            nextval = std::move(pc_).value(forward<Value>(val));
           }
           catch(...) {
-            auto ex = std::move(cc_).error(std::current_exception(), std::move(subex));
+            auto ex = std::move(cc_).error(std::current_exception());
             if(ex) std::rethrow_exception(ex);
           }
-          return std::move(cc_).value(std::move(*nextval), std::move(subex));
+          return std::move(cc_).value(std::move(*nextval));
         }
         else /* constexpr (PrevContinuation is _trivial_continuation) */ {
-          return std::move(cc_).value(std::forward<Value>(val), std::move(subex));
+          return std::move(cc_).value(std::forward<Value>(val));
         }
       }
       else /* constexpr */ {
@@ -69,31 +69,31 @@ struct adapted_then_continuation {
           // this if constexpr is really unnecessary, since the compiler should
           // figure out nothing is happening here in the trivial case
           try {
-            std::move(pc_).value(forward<Value>(val), subex);
+            std::move(pc_).value(forward<Value>(val));
           }
           catch(...) {
-            auto ex = std::move(cc_).error(std::current_exception(), std::move(subex));
+            auto ex = std::move(cc_).error(std::current_exception());
             if(ex) std::rethrow_exception(ex);
           }
         }
-        return std::move(cc_).value(std::move(subex));
+        return std::move(cc_).value();
       }
     }
 
     // void input case
-    template <class SubEx>
-    auto value(SubEx subex) {
-      if constexpr (!is_void_v<decay_t<decltype(declval<PrevContinuation&&>().value(declval<SubEx>()))>>) {
+    auto value() {
+      using prev_value_t = decay_t<decltype(declval<PrevContinuation&&>().value())>;
+      if constexpr (!is_void_v<prev_value_t>) {
         // PrevContinuation can't be _trivial_continuation since we went from void to non-void
-        optional<decay_t<decltype(std::move(pc_).value(subex))>> nextval;
+        optional<prev_value_t> nextval;
         try {
-          nextval = std::move(pc_).value(subex);
+          nextval = std::move(pc_).value();
         }
         catch(...) {
-          auto ex = std::move(cc_).error(std::current_exception(), std::move(subex));;
+          auto ex = std::move(cc_).error(std::current_exception());
           if(ex) std::rethrow_exception(ex);
         }
-        return std::move(cc_).value(std::move(*nextval), std::move(subex));
+        return std::move(cc_).value(std::move(*nextval));
       }
       else /* constexpr */ {
         // void return case:
@@ -101,23 +101,22 @@ struct adapted_then_continuation {
           // this if constexpr is really unnecessary, since the compiler should
           // figure out nothing is happening here in the trivial case
           try {
-            std::move(pc_).value(subex);
+            std::move(pc_).value();
           }
           catch(...) {
-            auto ex = std::move(cc_).error(std::current_exception(), std::move(subex));
+            auto ex = std::move(cc_).error(std::current_exception());
             if(ex) std::rethrow_exception(ex);
           }
         }
-        return std::move(cc_).value(std::move(subex));
+        return std::move(cc_).value();
       }
     }
 
-    template <class Error, class SubEx>
-    auto error(Error&& err, SubEx subex) {
+    template <class Error>
+    auto error(Error&& err) {
       // TODO: Is this the expected behavior, or should be be returning to the value chain if the error is handled?
       return std::move(cc_).error(
-        std::move(pc_).error(forward<decltype(err)>(err), subex),
-        std::move(subex)
+        std::move(pc_).error(forward<Error>(err))
       );
     }
 
@@ -137,29 +136,17 @@ struct continuation_wrapped_adapter_mfn {
   using apply = adapter<Executor, Continuation, PrevValue, PrevError>;
 };
 
-// For use with executor_value and executor_error in unevaluated contexts
-struct _trivial_inline_unevaluated_executor {
-  using value_type = void;
-  template <class Continuation>
-  void execute(Continuation&&) {
-    /* give an implementation so it links when used with the polymorphic wrapper */
-    std::abort(); // unreachable
-  }
-};
-
-// TODO clean up the assumption here that PrevContinuation.value() and .error() can be called with trivial_inline_executor (should probably be executor_value_subexecutor_t<Executor, Continuation> or something)
-// Putting executor here also for we ever decide we need to query the subexecutor
 template <class Executor, class Continuation, class Value>
 struct _continuation_value_return {
-  using type = decltype(declval<Continuation>().value(declval<Value>(), then_impl::_trivial_inline_unevaluated_executor{}));
+  using type = decltype(declval<Continuation>().value(declval<Value>()));
 };
 template <class Executor, class Continuation>
 struct _continuation_value_return<Executor, Continuation, void> {
-  using type = decltype(declval<Continuation>().value(then_impl::_trivial_inline_unevaluated_executor{}));
+  using type = decltype(declval<Continuation>().value());
 };
 template <class Executor, class Continuation, class Error>
 struct _continuation_error_return {
-  using type = decltype(declval<Continuation>().error(declval<Error>(), then_impl::_trivial_inline_unevaluated_executor{}));
+  using type = decltype(declval<Continuation>().error(declval<Error>()));
 };
 
 template<class Executor, class PrevContinuation, class PrevValue, class PrevError>
@@ -259,50 +246,38 @@ struct executor_error<then_impl::adapter<Executor, PrevContinuation, PrevValue, 
   using type = typename then_impl::_continuation_error_return<Executor, PrevContinuation, PrevError>::type;
 };
 
-template<class VSubEx/*=void*/, class ESubEx/*=void*/>
 struct then_t
 {
-    static constexpr bool is_requirable = true;
-    static constexpr bool is_preferable = false;
+  static constexpr bool is_requirable = true;
+  static constexpr bool is_preferable = false;
 
-    using polymorphic_query_result_type = bool;
+  using polymorphic_query_result_type = bool;
 
-  private:
+  template<class Executor>
+  static constexpr bool static_query_v
+    = is_then_executor_v<Executor, executor_value_t<Executor>, executor_error_t<Executor>>;
 
-    template <typename Executor>
-    using actual_vsubex_t = conditional_t<is_void_v<VSubEx>, Executor, VSubEx>;
-    template <typename Executor>
-    using actual_esubex_t = conditional_t<is_void_v<ESubEx>, Executor, ESubEx>;
+  static constexpr bool value() { return true; }
 
-
-  public:
-    template<class Executor>
-    static constexpr bool static_query_v
-      = is_then_executor_v<Executor, executor_value_t<Executor>, executor_error_t<Executor>, actual_vsubex_t<Executor>, actual_esubex_t<Executor>>;
-
-    static constexpr bool value() { return true; }
-
-  public:
-    // Default require for bulk adapts single executors.
-    template <typename Executor, typename =
-      std::enable_if_t<
-        is_executor_v<Executor, executor_value_t<decay_t<Executor>>, executor_error_t<decay_t<Executor>>, actual_vsubex_t<Executor>, actual_esubex_t<Executor>>
-          && !is_then_executor_v<Executor, executor_value_t<decay_t<Executor>>, executor_error_t<decay_t<Executor>>, actual_vsubex_t<Executor>, actual_esubex_t<Executor>>
-      >
+  // Default require for bulk adapts single executors.
+  template <typename Executor, typename =
+    std::enable_if_t<
+      is_executor_v<Executor, executor_value_t<decay_t<Executor>>, executor_error_t<decay_t<Executor>>>
+        && !is_then_executor_v<Executor, executor_value_t<decay_t<Executor>>, executor_error_t<decay_t<Executor>>>
     >
-    friend auto require(Executor&& ex, then_t)
-    {
-      return then_impl::adapter<
-        decay_t<Executor>,
-        then_impl::_trivial_continuation,
-        executor_value_t<decay_t<Executor>>,
-        executor_error_t<decay_t<Executor>>
-      >(std::forward<Executor>(ex));
-    }
+  >
+  friend auto require(Executor&& ex, then_t)
+  {
+    return then_impl::adapter<
+      decay_t<Executor>,
+      then_impl::_trivial_continuation,
+      executor_value_t<decay_t<Executor>>,
+      executor_error_t<decay_t<Executor>>
+    >(std::forward<Executor>(ex));
+  }
 };
 
-template<class VSubEx=void, class ESubEx=void>
-constexpr then_t<VSubEx, ESubEx> then;
+constexpr then_t then;
 
 } // end namespace execution
 } // end namespace executors_v1

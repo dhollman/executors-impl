@@ -28,7 +28,7 @@ class trivial_adapter_mixin : public Base
 
     template<class Continuation>
     auto execute(Continuation&& c) const &
-    -> decltype(inner_declval<Continuation>().execute(std::forward<Continuation&&>(c)))
+      -> decltype(inner_declval<Continuation const&>().execute(std::forward<Continuation&&>(c)))
     {
       return this->executor_.execute(c);
     }
@@ -42,9 +42,9 @@ class trivial_adapter_mixin : public Base
 
     template<class Continuation>
     auto then_execute(Continuation&& c) const &
-    -> decltype(inner_declval<Continuation>().then_execute(std::forward<Continuation>(c)))
+    -> decltype(inner_declval<Continuation const&>().then_execute(std::forward<Continuation>(c)))
     {
-      return std::move(this->executor_).then_execute(std::forward<Continuation>(c));
+      return this->executor_.then_execute(std::forward<Continuation>(c));
     }
 
     template<class Continuation>

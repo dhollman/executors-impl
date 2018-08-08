@@ -18,6 +18,10 @@ inline namespace executors_v1 {
 namespace execution {
 namespace executor_impl {
 
+
+//==============================================================================
+// <editor-fold desc="property_list and helpers"> {{{1
+
 template<class... SupportableProperties>
 struct property_list;
 
@@ -80,7 +84,27 @@ struct contains_exact_property_list<property_list<>, SupportableProperties...> :
 template<class PropertyList, class... SupportableProperties>
 static constexpr bool contains_exact_property_list_v = contains_exact_property_list<PropertyList, SupportableProperties...>::value;
 
-template<class Executor, class T, class E, class VSubEx, class ESubEx, class... SupportableProperties>
+struct identity_property
+{
+  static constexpr bool is_requirable = true;
+  static constexpr bool is_preferable = true;
+  template<class Executor> static constexpr bool static_query_v = true;
+  static constexpr bool value() { return true; }
+};
+
+template<class Property, class... SupportableProperties>
+using conditional_property_t = typename conditional<
+  contains_exact_property_v<Property, SupportableProperties...>,
+  Property, identity_property>::type;
+
+// </editor-fold> end property_list and helpers }}}1
+//==============================================================================
+
+
+//==============================================================================
+// <editor-fold desc="is_valid_target"> {{{1
+
+template<class Executor, class T, class E, class... SupportableProperties>
 struct is_valid_target;
 
 // This is going into 20, but for now:
@@ -96,41 +120,33 @@ struct valid_target_types_match {
   >;
 };
 
-template<class Executor, class T, class E, class VSubEx, class ESubEx>
-struct is_valid_target<Executor, T, E, VSubEx, ESubEx>
+template<class Executor, class T, class E>
+struct is_valid_target<Executor, T, E>
   : conditional_t<
       // prevent calling executor_value_t on a non-executor
-      is_executor_v<Executor, T, E, VSubEx, ESubEx>,
+      is_executor_v<Executor, T, E>,
       valid_target_types_match<Executor, T, E>,
       std::false_type
     >::type
 { };
 
-template<class Executor, class T, class E, class VSubEx, class ESubEx, class Head, class... Tail>
-struct is_valid_target<Executor, T, E, VSubEx, ESubEx, Head, Tail...>
+template<class Executor, class T, class E, class Head, class... Tail>
+struct is_valid_target<Executor, T, E, Head, Tail...>
   : std::integral_constant<bool,
       (!Head::is_requirable || can_require_v<Executor, Head>)
       && (!Head::is_preferable || can_prefer_v<Executor, Head>)
       && (Head::is_requirable || Head::is_preferable || can_query_v<Executor, Head>)
-      && is_valid_target<Executor, T, E, VSubEx, ESubEx, Tail...>::value> {};
+      && is_valid_target<Executor, T, E, Tail...>::value> {};
 
-template<class Executor, class T, class E, class VSubEx, class ESubEx, class... SupportableProperties>
-static constexpr bool is_valid_target_v = is_valid_target<Executor, T, E, VSubEx, ESubEx, SupportableProperties...>::value;
+template<class Executor, class T, class E, class... SupportableProperties>
+static constexpr bool is_valid_target_v = is_valid_target<Executor, T, E, SupportableProperties...>::value;
 
-struct identity_property
-{
-  static constexpr bool is_requirable = true;
-  static constexpr bool is_preferable = true;
-  template<class Executor> static constexpr bool static_query_v = true;
-  static constexpr bool value() { return true; }
-};
+// </editor-fold> end is_valid_target }}}1
+//==============================================================================
 
-template<class Property, class... SupportableProperties>
-using conditional_property_t = typename conditional<
-  contains_exact_property_v<Property, SupportableProperties...>,
-    Property, identity_property>::type;
 
 //==============================================================================
+// <editor-fold desc="polymorphic wrappers for functions and continuations"> {{{1
 
 template<class R, class... Args>
 struct single_use_func_base
@@ -187,66 +203,94 @@ template<class Function> using twoway_func = single_use_func<Function, std::shar
 using twoway_then_func_base = single_use_func_base<void, std::shared_ptr<void>, std::exception_ptr>;
 template<class Function> using twoway_then_func = single_use_func<Function, void, std::shared_ptr<void>, std::exception_ptr>;
 
-//==============================================================================
-
-template <class T, class E, class R, class S, class VSubEx, class ESubEx>
+template <class T, class E, class R, class S>
 struct single_use_continuation_base {
   // for now, omit distinction between T&& and T const& versions for simplicity
-  virtual R value(T, VSubEx) && = 0;
-  virtual S error(E, ESubEx) && = 0;
+  virtual R value(T) && = 0;
+  virtual S error(E) && = 0;
+  virtual ~single_use_continuation_base() noexcept = default;
+};
+template <class E, class R, class S>
+struct single_use_continuation_base<void, E, R, S> {
+  virtual R value() && = 0;
+  virtual S error(E) && = 0;
   virtual ~single_use_continuation_base() noexcept = default;
 };
 
-template <class Continuation, class T, class E, class R, class S, class VSubEx, class ESubEx>
+template <class Continuation, class T, class E, class R, class S>
 struct single_use_continuation
-  : single_use_continuation_base<T, E, R, S, VSubEx, ESubEx>
+  : single_use_continuation_base<T, E, R, S>
 {
-  Continuation c_;
-  R value(T&& v, VSubEx subex) && override {
-    return std::move(c_).value(std::move(v), std::move(subex));
-  }
+  private:
+    Continuation c_;
 
-  S error(E&& e, ESubEx subex) && override {
-    return std::move(c_).error(std::move(e), std::move(subex));
-  }
+  public:
 
+    explicit single_use_continuation(Continuation&& c) : c_(std::move(c)) { }
+
+    R value(T v) && override {
+      return std::move(c_).value(std::move(v));
+    }
+
+    S error(E e) && override {
+      return std::move(c_).error(std::move(e));
+    }
 };
 
+template <class Continuation, class E, class R, class S>
+struct single_use_continuation<Continuation, void, E, R, S>
+  : single_use_continuation_base<void, E, R, S>
+{
+  private:
+    Continuation c_;
+
+  public:
+
+    explicit single_use_continuation(Continuation&& c) : c_(std::move(c)) { }
+
+    R value() && override {
+      return std::move(c_).value();
+    }
+
+    S error(E e) && override {
+      return std::move(c_).error(std::move(e));
+    }
+};
+
+// </editor-fold> end polymorphic wrappers for functions and continuations }}}1
 //==============================================================================
 
-template <class T, class E, class SubEx>
+
+//==============================================================================
+// <editor-fold desc="private implementation class for polymorphic executor"> {{{1
+
+template <class T, class E>
 struct impl_base
 {
   virtual ~impl_base() {}
   //virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
-  virtual void execute(unique_ptr<single_use_continuation_base<T, E, void, void, SubEx, SubEx>> c) && = 0;
+  virtual void execute(unique_ptr<single_use_continuation_base<T, E, void, E>> c) && = 0;
 
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
   virtual const void* target() const = 0;
   virtual bool equals(const impl_base* e) const noexcept = 0;
-  virtual impl_base* require(const type_info&, const void* p) const = 0;
+  virtual impl_base* require(const type_info&, const void* p) && = 0;
   //virtual impl_base* prefer(const type_info&, const void* p) const = 0;
   virtual void* query(const type_info&, const void* p) const = 0;
 };
 
 template<class Executor, class... SupportableProperties>
-struct impl : impl_base<
-  executor_value_t<Executor>, executor_error_t<Executor>, executor<void, executor_error_t<Executor>, SupportableProperties...>
->
+struct impl : impl_base<executor_value_t<Executor>, executor_error_t<Executor>>
 {
   Executor executor_;
 
-  using base_t = impl_base<
-    executor_value_t<Executor>, executor_error_t<Executor>, executor<void, executor_error_t<Executor>, SupportableProperties...>
-  >;
+  using base_t = impl_base<executor_value_t<Executor>, executor_error_t<Executor>>;
   using value_t = executor_value_t<Executor>;
   using error_t = executor_error_t<Executor>;
-  using value_subexecutor_t = executor<void, executor_error_t<Executor>, SupportableProperties...>;
-  using error_subexecutor_t = executor<void, executor_error_t<Executor>, SupportableProperties...>;
   using executor_continuation_t = single_use_continuation_base<
-    value_t, error_t, void, void, value_subexecutor_t, error_subexecutor_t
+    value_t, error_t, void, error_t
   >;
 
   explicit impl(Executor ex) : executor_(std::move(ex)) {}
@@ -282,7 +326,7 @@ struct impl : impl_base<
 
   void
   execute(unique_ptr<executor_continuation_t> c) && override {
-    executor_.execute(std::move(*c));
+    std::move(executor_).execute(std::move(*c));
   }
 
 //  template<class T, class U> auto twoway_execute_helper(T&& f, U&& then)
@@ -367,32 +411,32 @@ struct impl : impl_base<
     return executor_ == *static_cast<const Executor*>(e->target());
   }
 
-  base_t* require_helper(property_list<>, const type_info&, const void*) const
+  base_t* require_helper(property_list<>, const type_info&, const void*) &&
   {
-    assert(0);
+    std::abort(); // should be unreachable
     return nullptr;
   }
 
   template<class Head, class... Tail>
-  base_t* require_helper(property_list<Head, Tail...>, const type_info& t, const void* p, typename std::enable_if<Head::is_requirable>::type* = 0) const
+  base_t* require_helper(property_list<Head, Tail...>, const type_info& t, const void* p, typename std::enable_if<Head::is_requirable>::type* = 0) &&
   {
     if (t == typeid(Head))
     {
-      using executor_type = decltype(execution::require(executor_, *static_cast<const Head*>(p)));
-      return new impl<executor_type, SupportableProperties...>(execution::require(executor_, *static_cast<const Head*>(p)));
+      using executor_type = decltype(execution::require(std::move(executor_), *static_cast<const Head*>(p)));
+      return new impl<executor_type, SupportableProperties...>(execution::require(std::move(executor_), *static_cast<const Head*>(p)));
     }
-    return require_helper(property_list<Tail...>{}, t, p);
+    return std::move(*this).require_helper(property_list<Tail...>{}, t, p);
   }
 
   template<class Head, class... Tail>
-  base_t* require_helper(property_list<Head, Tail...>, const type_info& t, const void* p, typename std::enable_if<!Head::is_requirable>::type* = 0) const
+  base_t* require_helper(property_list<Head, Tail...>, const type_info& t, const void* p, typename std::enable_if<!Head::is_requirable>::type* = 0) &&
   {
-    return require_helper(property_list<Tail...>{}, t, p);
+    return std::move(*this).require_helper(property_list<Tail...>{}, t, p);
   }
 
-  virtual base_t* require(const type_info& t, const void* p) const
+  virtual base_t* require(const type_info& t, const void* p) &&
   {
-    return this->require_helper(property_list<SupportableProperties...>{}, t, p);
+    return std::move(*this).require_helper(property_list<SupportableProperties...>{}, t, p);
   }
 
   // TODO make these use move semantics
@@ -449,17 +493,17 @@ struct impl : impl_base<
   }
 };
 
+// </editor-fold> end private implementation class for polymorphic executor }}}1
+//==============================================================================
+
 } // namespace executor_impl
 
 // TODO write a shared_executor wrapper also?
 template<class T, class E, class... SupportableProperties>
 class executor
 {
-  // TODO (maybe) parse through the properties to see if there is one that indicates the subexecutor type???
-  using value_subexecutor_t = executor<void, E, SupportableProperties...>;
-  using error_subexecutor_t = executor<void, E, SupportableProperties...>;
   using polymorphic_executor_continuation_t = executor_impl::single_use_continuation_base<
-    T, E, void, void, value_subexecutor_t, error_subexecutor_t
+    T, E, void, E
   >;
 public:
 
@@ -489,7 +533,7 @@ public:
   template<class Executor>
   executor(Executor e,
       typename std::enable_if<executor_impl::is_valid_target_v<
-        Executor, T, E, value_subexecutor_t, error_subexecutor_t, SupportableProperties...
+        Executor, T, E, SupportableProperties...
       >>::type* = 0
   )
   {
@@ -568,7 +612,7 @@ public:
   executor require(const Property& p) const
   {
     executor_impl::find_convertible_property_t<Property, SupportableProperties...> p1(p);
-    return impl_ ? impl_->require(typeid(p1), &p1) : throw bad_executor();
+    return impl_ ? std::move(*impl_).require(typeid(p1), &p1) : throw bad_executor();
   }
 
   template<class Property,
@@ -611,13 +655,13 @@ public:
   }
 
   template<class Continuation>
-  void execute(Continuation c) const
+  void execute(Continuation c) &&
   {
-    using continuation_impl_t = executor_impl::impl<Continuation, T, E, void, void, value_subexecutor_t, error_subexecutor_t>;
+    using continuation_impl_t = executor_impl::single_use_continuation<Continuation, T, E, void, E>;
     std::unique_ptr<polymorphic_executor_continuation_t> cp(
       new continuation_impl_t(std::move(c))
     );
-    impl_ ? impl_->execute(std::move(cp)) : throw bad_executor();
+    impl_ ? std::move(*impl_).execute(std::move(cp)) : throw bad_executor();
   }
 
 //  template<class Function,
@@ -747,10 +791,10 @@ public:
          bool
        >
   {
-    if (!a.get_impl() && !b.get_impl())
+    if (!a.get_impl() && !executor::get_other_impl(b))
       return true;
-    if (a.get_impl() && b.get_impl())
-      return a.get_impl()->equals(b.get_impl());
+    if (a.get_impl() && executor::get_other_impl(b))
+      return a.get_impl()->equals(executor::get_other_impl(b));
     return false;
   }
 
@@ -798,9 +842,15 @@ public:
 
 private:
   template<class, class, class...> friend class executor;
-  executor(executor_impl::impl_base<T, E, value_subexecutor_t>* i) noexcept : impl_(i) {}
-  executor_impl::impl_base<T, E, value_subexecutor_t>* impl_;
-  const executor_impl::impl_base<T, E, value_subexecutor_t>* get_impl() const { return impl_; }
+  executor(executor_impl::impl_base<T, E>* i) noexcept : impl_(i) {}
+  executor_impl::impl_base<T, E>* impl_;
+  const executor_impl::impl_base<T, E>* get_impl() const { return impl_; }
+
+  // Take advantage of friendship to act as an attorney for the operator== implementations
+  template <class... OtherSupportableProperties>
+  static auto const* get_other_impl(executor<T, E, OtherSupportableProperties...> const& other) {
+    return other.get_impl();
+  }
 };
 
 // executor specialized algorithms:

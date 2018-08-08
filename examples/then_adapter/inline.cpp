@@ -7,7 +7,7 @@ struct inline_executor {
   using value_type = void;
   template <typename Continuation>
   void execute(Continuation&& c) {
-    std::forward<Continuation>(c).value(*this);
+    std::forward<Continuation>(c).value();
   }
   constexpr bool operator==(inline_executor const& other) const noexcept { return true; }
   constexpr bool operator!=(inline_executor const& other) const noexcept { return false; }
@@ -19,7 +19,7 @@ struct inline_value_executor {
   Value v;
   template <typename Continuation>
   void execute(Continuation&& c) && {
-    std::forward<Continuation>(c).value(std::move(v), inline_executor{});
+    std::forward<Continuation>(c).value(std::move(v));
   }
   constexpr bool operator==(inline_value_executor const& other) const noexcept { return true; }
   constexpr bool operator!=(inline_value_executor const& other) const noexcept { return false; }
@@ -36,11 +36,11 @@ int main() {
 
   // add a property at the beginning of the chain
   auto then_ex = execution::require(
-    inline_value_executor{42}, blocking_adaptation.allowed, then<>
+    inline_value_executor{42}, blocking_adaptation.allowed, then
   );
   auto next_ex = execution::require(
     std::move(then_ex).then_execute(execution::on_value([](int v){ std::cout << "hello, " << v << std::endl; return v*v; })),
-    then<>
+    then
   );
   auto tail_ex = std::move(next_ex).then_execute(execution::on_value([](int v){ std::cout << "world, " << v << std::endl; return 73; }));
 
@@ -55,11 +55,11 @@ int main() {
 
   // And that it still works:
   std::move(noblock_tail_ex)
-    .execute(execution::on_value_with_subexecutor([](int val, auto&&){ std::cout << "goodbye, " << val << std::endl; }));
+    .execute(execution::on_value([](int val){ std::cout << "goodbye, " << val << std::endl; }));
 
 
   // (potentially?) less generic option: require `then_execute` to always return a `ThenExecutor` of the appropriate type
-  std::experimental::execution::require(inline_value_executor{42}, then<>)
+  std::experimental::execution::require(inline_value_executor{42}, then)
     .then_execute(execution::on_value([](auto&& val){ std::cout << "hello again, " << val << std::endl; }))
     .then_execute(execution::on_void([](){ std::cout << "world, " << std::endl; return 73; }))
     .execute(execution::on_value([](int val){ std::cout << "goodbye, " << val << std::endl; }));

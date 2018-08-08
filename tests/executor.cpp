@@ -20,7 +20,7 @@ struct inline_executor {
   using value_type = void;
   template <class Continuation>
   void execute(Continuation&& c) {
-    std::forward<Continuation>(c).value(*this);
+    std::forward<Continuation>(c).value();
   }
   static constexpr auto query(execution::blocking_t) noexcept { return execution::blocking.always; }
   auto require(execution::blocking_t::possibly_t) && noexcept { return std::move(*this); }
@@ -34,7 +34,7 @@ struct inline_value_executor {
   Value v;
   template <class Continuation>
   void execute(Continuation&& c) {
-    std::forward<Continuation>(c).value(v, *this);
+    std::forward<Continuation>(c).value(v);
   }
   static constexpr auto query(execution::blocking_t) noexcept { return execution::blocking.always; }
   auto require(execution::blocking_t::possibly_t) && noexcept { return std::move(*this); }

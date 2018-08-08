@@ -19,21 +19,21 @@ template <typename Continuation, typename Promise>
 auto _make_blocking_continuation(Continuation&& c, Promise&& p) {
   return execution::make_continuation(
     // Value handler
-    [](auto&& val, auto&& subex, auto&& con, auto&& prom) {
+    [](auto&& val, auto&& con, auto&& prom) {
       if constexpr (is_same_v<decay_t<decltype(val)>, monostate>) {
-        auto rv = std::move(con).value(forward<decltype(subex)>(subex));
+        auto rv = std::move(con).value();
         std::move(prom).set_value();
         return rv;
       }
       else /* constexpr (not void continuation) */ {
-        auto rv = std::move(con).value(forward<decltype(val)>(val), forward<decltype(subex)>(subex));
+        auto rv = std::move(con).value(forward<decltype(val)>(val));
         std::move(prom).set_value();
         return rv;
       }
     },
     // Error handler
-    [](auto&& err, auto&& subex, auto&& con, auto&& prom) {
-      auto rv = std::move(con).error(forward<decltype(err)>(err), forward<decltype(subex)>(subex));
+    [](auto&& err, auto&& con, auto&& prom) {
+      auto rv = std::move(con).error(forward<decltype(err)>(err));
       std::move(prom).set_value();
       return rv;
     },
@@ -94,6 +94,24 @@ private:
     }
   };
 
+  template <class Executor>
+  class possibly_adapter :
+    public impl::trivial_adapter_mixin<Executor,
+      impl::enumerator_adapter<possibly_adapter, Executor, blocking_t, possibly_t>
+    >
+  {
+    private:
+
+      using base_t = impl::trivial_adapter_mixin<Executor,
+        impl::enumerator_adapter<possibly_adapter, Executor, blocking_t, possibly_t>
+      >;
+
+    public:
+
+      using base_t::base_t;
+
+  };
+
 public:
   template<class Executor,
     typename = std::enable_if_t<
@@ -103,6 +121,12 @@ public:
   friend adapter<Executor> require(Executor ex, always_t)
   {
     return adapter<Executor>(std::move(ex));
+  }
+  // anything can be adapted to blocking.possibly, since it means any kind of blocking:
+  template<class Executor>
+  friend possibly_adapter<Executor> require(Executor ex, possibly_t)
+  {
+    return possibly_adapter<Executor>(std::move(ex));
   }
 };
 

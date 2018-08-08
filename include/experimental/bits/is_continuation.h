@@ -10,11 +10,11 @@ inline namespace executors_v1 {
 namespace execution {
 namespace is_continuation_impl {
 
-template<class C, class T, class E, class R, class S, class VSubEx, class ESubEx, class = std::void_t<>>
+template<class C, class T, class E, class R, class S, class = std::void_t<>>
 struct eval : std::false_type {};
 
-// Needed since something that meets the requirements of Continuation<T, E, R, S, VSubEx, ESubEx>
-// also meets the requirements of Continuation<T, E, void, void, VSubEx, ESubEx> even if
+// Needed since something that meets the requirements of Continuation<T, E, R, S>
+// also meets the requirements of Continuation<T, E, void, void> even if
 // is_convertible_v<R, void> isn't true.
 template <typename From, typename To>
 struct _convertible_to_or_to_is_void
@@ -25,16 +25,16 @@ struct _convertible_to_or_to_is_void
     >
 { };
 
-template<class C, class T, class E, class R, class S, class VSubEx, class ESubEx>
-struct eval<C, T, E, R, S, VSubEx, ESubEx,
+template<class C, class T, class E, class R, class S>
+struct eval<C, T, E, R, S,
   void_t<
     // value method requirements:
     enable_if_t<_convertible_to_or_to_is_void<decltype(
-      declval<C&&>().value(declval<T&&>(), declval<VSubEx&&>())
+      declval<C&&>().value(declval<T&&>())
     ), R>::value>,
     // error method requirements:
     enable_if_t<_convertible_to_or_to_is_void<decltype(
-      declval<C&&>().error(declval<E&&>(), declval<ESubEx&&>())
+      declval<C&&>().error(declval<E&&>())
     ), R>::value>,
     // also requires move_constructible:
     enable_if_t<is_nothrow_move_constructible<T>::value>
@@ -44,8 +44,8 @@ struct eval<C, T, E, R, S, VSubEx, ESubEx,
 
 } // end namespace is_continuation_impl
 
-template <class C, class T, class E, class R, class S, class VSubEx, class ESubEx>
-struct is_continuation : is_continuation_impl::eval<C, T, E, R, S, VSubEx, ESubEx> { };
+template <class C, class T, class E, class R, class S>
+struct is_continuation : is_continuation_impl::eval<C, T, E, R, S> { };
 
 } // end namespace execution
 } // end namespace executors_v1
