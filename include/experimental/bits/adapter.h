@@ -5,6 +5,8 @@
 #include <experimental/bits/query_static_member_traits.h>
 #include <experimental/bits/require_member_traits.h>
 
+#include <experimental/execution>
+
 #include <utility>
 
 namespace std {
@@ -58,8 +60,12 @@ template<template<class> class Derived, class Executor>
 class adapter
 {
 public:
+
+  using value_type = executor_value_t<Executor>;
+  using error_type = executor_error_t<Executor>;
+
   adapter(adapter&&) noexcept = default;
-  adapter(Executor ex)
+  adapter(Executor ex) noexcept
     : executor_(std::move(ex))
   { }
 

@@ -7,4 +7,5 @@ endmacro()
 add_test(executor)
 add_test(future)
 add_test(static_thread_pool)
+add_test(traits)
 

@@ -4,6 +4,7 @@
 #include <experimental/execution>
 
 struct inline_executor {
+  using value_type = void;
   template <typename Continuation>
   void execute(Continuation&& c) {
     std::forward<Continuation>(c).value(*this);
@@ -14,6 +15,7 @@ struct inline_executor {
 
 template <typename Value>
 struct inline_value_executor {
+  using value_type = Value;
   Value v;
   template <typename Continuation>
   void execute(Continuation&& c) && {
@@ -34,11 +36,11 @@ int main() {
 
   // add a property at the beginning of the chain
   auto then_ex = execution::require(
-    inline_value_executor{42}, blocking_adaptation.allowed, then<int>
+    inline_value_executor{42}, blocking_adaptation.allowed, then<>
   );
   auto next_ex = execution::require(
     std::move(then_ex).then_execute(execution::on_value([](int v){ std::cout << "hello, " << v << std::endl; return v*v; })),
-    then<int>
+    then<>
   );
   auto tail_ex = std::move(next_ex).then_execute(execution::on_value([](int v){ std::cout << "world, " << v << std::endl; return 73; }));
 
@@ -57,7 +59,7 @@ int main() {
 
 
   // (potentially?) less generic option: require `then_execute` to always return a `ThenExecutor` of the appropriate type
-  std::experimental::execution::require(inline_value_executor{42}, then<int>)
+  std::experimental::execution::require(inline_value_executor{42}, then<>)
     .then_execute(execution::on_value([](auto&& val){ std::cout << "hello again, " << val << std::endl; }))
     .then_execute(execution::on_void([](){ std::cout << "world, " << std::endl; return 73; }))
     .execute(execution::on_value([](int val){ std::cout << "goodbye, " << val << std::endl; }));

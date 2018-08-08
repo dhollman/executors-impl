@@ -1,10 +1,14 @@
 #ifndef STD_EXPERIMENTAL_BITS_EXECUTOR_H
 #define STD_EXPERIMENTAL_BITS_EXECUTOR_H
 
+#include <experimental/bits/bad_executor.h>
+#include <experimental/bits/executor_value.h>
+#include <experimental/bits/executor_error.h>
+
+#include <experimental/execution>
+
 #include <atomic>
 #include <cassert>
-#include <experimental/bits/bad_executor.h>
-#include <experimental/future>
 #include <memory>
 #include <utility>
 
@@ -76,22 +80,42 @@ struct contains_exact_property_list<property_list<>, SupportableProperties...> :
 template<class PropertyList, class... SupportableProperties>
 static constexpr bool contains_exact_property_list_v = contains_exact_property_list<PropertyList, SupportableProperties...>::value;
 
-template<class Executor, class... SupportableProperties>
+template<class Executor, class T, class E, class VSubEx, class ESubEx, class... SupportableProperties>
 struct is_valid_target;
 
-template<class Executor>
-struct is_valid_target<Executor> : std::true_type {};
+// This is going into 20, but for now:
+template <typename T>
+struct _type_identity { using type = T; };
 
-template<class Executor, class Head, class... Tail>
-struct is_valid_target<Executor, Head, Tail...>
+// TODO decide if this should be convertible instead of same
+template<class Executor, class T, class E>
+struct valid_target_types_match {
+  using type = std::bool_constant<
+    is_same_v<executor_value_t<Executor>, T>
+      && is_same_v<executor_error_t<Executor>, E>
+  >;
+};
+
+template<class Executor, class T, class E, class VSubEx, class ESubEx>
+struct is_valid_target<Executor, T, E, VSubEx, ESubEx>
+  : conditional_t<
+      // prevent calling executor_value_t on a non-executor
+      is_executor_v<Executor, T, E, VSubEx, ESubEx>,
+      valid_target_types_match<Executor, T, E>,
+      std::false_type
+    >::type
+{ };
+
+template<class Executor, class T, class E, class VSubEx, class ESubEx, class Head, class... Tail>
+struct is_valid_target<Executor, T, E, VSubEx, ESubEx, Head, Tail...>
   : std::integral_constant<bool,
       (!Head::is_requirable || can_require_v<Executor, Head>)
       && (!Head::is_preferable || can_prefer_v<Executor, Head>)
       && (Head::is_requirable || Head::is_preferable || can_query_v<Executor, Head>)
-      && is_valid_target<Executor, Tail...>::value> {};
+      && is_valid_target<Executor, T, E, VSubEx, ESubEx, Tail...>::value> {};
 
-template<class Executor, class... SupportableProperties>
-static constexpr bool is_valid_target_v = is_valid_target<Executor, SupportableProperties...>::value;
+template<class Executor, class T, class E, class VSubEx, class ESubEx, class... SupportableProperties>
+static constexpr bool is_valid_target_v = is_valid_target<Executor, T, E, VSubEx, ESubEx, SupportableProperties...>::value;
 
 struct identity_property
 {
@@ -105,6 +129,8 @@ template<class Property, class... SupportableProperties>
 using conditional_property_t = typename conditional<
   contains_exact_property_v<Property, SupportableProperties...>,
     Property, identity_property>::type;
+
+//==============================================================================
 
 template<class R, class... Args>
 struct single_use_func_base
@@ -149,9 +175,6 @@ struct multi_use_func : multi_use_func_base<R, Args...>
   }
 };
 
-using oneway_func_base = single_use_func_base<void>;
-template<class Function> using oneway_func = single_use_func<Function, void>;
-
 using shared_factory_base = multi_use_func_base<std::shared_ptr<void>>;
 template<class SharedFactory> using shared_factory = multi_use_func<SharedFactory, std::shared_ptr<void>>;
 
@@ -164,122 +187,161 @@ template<class Function> using twoway_func = single_use_func<Function, std::shar
 using twoway_then_func_base = single_use_func_base<void, std::shared_ptr<void>, std::exception_ptr>;
 template<class Function> using twoway_then_func = single_use_func<Function, void, std::shared_ptr<void>, std::exception_ptr>;
 
+//==============================================================================
+
+template <class T, class E, class R, class S, class VSubEx, class ESubEx>
+struct single_use_continuation_base {
+  // for now, omit distinction between T&& and T const& versions for simplicity
+  virtual R value(T, VSubEx) && = 0;
+  virtual S error(E, ESubEx) && = 0;
+  virtual ~single_use_continuation_base() noexcept = default;
+};
+
+template <class Continuation, class T, class E, class R, class S, class VSubEx, class ESubEx>
+struct single_use_continuation
+  : single_use_continuation_base<T, E, R, S, VSubEx, ESubEx>
+{
+  Continuation c_;
+  R value(T&& v, VSubEx subex) && override {
+    return std::move(c_).value(std::move(v), std::move(subex));
+  }
+
+  S error(E&& e, ESubEx subex) && override {
+    return std::move(c_).error(std::move(e), std::move(subex));
+  }
+
+};
+
+//==============================================================================
+
+template <class T, class E, class SubEx>
 struct impl_base
 {
   virtual ~impl_base() {}
-  virtual impl_base* clone() const noexcept = 0;
+  //virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
-  virtual void execute(std::unique_ptr<oneway_func_base> f) = 0;
-  virtual void twoway_execute(std::unique_ptr<twoway_func_base> f, std::unique_ptr<twoway_then_func_base> then) = 0;
-  virtual void bulk_execute(std::unique_ptr<bulk_func_base> f, std::size_t n, std::shared_ptr<shared_factory_base> sf) = 0;
+  virtual void execute(unique_ptr<single_use_continuation_base<T, E, void, void, SubEx, SubEx>> c) && = 0;
+
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
   virtual const void* target() const = 0;
   virtual bool equals(const impl_base* e) const noexcept = 0;
   virtual impl_base* require(const type_info&, const void* p) const = 0;
-  virtual impl_base* prefer(const type_info&, const void* p) const = 0;
+  //virtual impl_base* prefer(const type_info&, const void* p) const = 0;
   virtual void* query(const type_info&, const void* p) const = 0;
 };
 
 template<class Executor, class... SupportableProperties>
-struct impl : impl_base
+struct impl : impl_base<
+  executor_value_t<Executor>, executor_error_t<Executor>, executor<void, executor_error_t<Executor>, SupportableProperties...>
+>
 {
   Executor executor_;
-  std::atomic<std::size_t> ref_count_{1};
+
+  using base_t = impl_base<
+    executor_value_t<Executor>, executor_error_t<Executor>, executor<void, executor_error_t<Executor>, SupportableProperties...>
+  >;
+  using value_t = executor_value_t<Executor>;
+  using error_t = executor_error_t<Executor>;
+  using value_subexecutor_t = executor<void, executor_error_t<Executor>, SupportableProperties...>;
+  using error_subexecutor_t = executor<void, executor_error_t<Executor>, SupportableProperties...>;
+  using executor_continuation_t = single_use_continuation_base<
+    value_t, error_t, void, void, value_subexecutor_t, error_subexecutor_t
+  >;
 
   explicit impl(Executor ex) : executor_(std::move(ex)) {}
 
-  virtual impl_base* clone() const noexcept
+  //virtual impl_base* clone() const noexcept
+  //{
+  //  impl* e = const_cast<impl*>(this);
+  //  ++e->ref_count_;
+  //  return e;
+  //}
+
+  void destroy() noexcept override
   {
-    impl* e = const_cast<impl*>(this);
-    ++e->ref_count_;
-    return e;
+    delete this;
   }
 
-  virtual void destroy() noexcept
-  {
-    if (--ref_count_ == 0)
-      delete this;
+//  template<class T>
+//  auto execute_helper(T&& f)
+//    -> typename std::enable_if<std::is_same<T, T>::value
+//      && contains_exact_property_v<oneway_t, SupportableProperties...>
+//        && contains_exact_property_v<single_t, SupportableProperties...>>::type
+//  {
+//    executor_.execute([f = std::move(f)]() mutable { f.release()->call(); });
+//  }
+//
+//  template<class T> auto execute_helper(T&&)
+//    -> typename std::enable_if<!std::is_same<T, T>::value
+//      || !contains_exact_property_v<oneway_t, SupportableProperties...>
+//        || !contains_exact_property_v<single_t, SupportableProperties...>>::type
+//  {
+//    assert(0); // should be unreachable
+//  }
+
+  void
+  execute(unique_ptr<executor_continuation_t> c) && override {
+    executor_.execute(std::move(*c));
   }
 
-  template<class T> auto execute_helper(T&& f)
-    -> typename std::enable_if<std::is_same<T, T>::value
-      && contains_exact_property_v<oneway_t, SupportableProperties...>
-        && contains_exact_property_v<single_t, SupportableProperties...>>::type
-  {
-    executor_.execute([f = std::move(f)]() mutable { f.release()->call(); });
-  }
-
-  template<class T> auto execute_helper(T&&)
-    -> typename std::enable_if<!std::is_same<T, T>::value
-      || !contains_exact_property_v<oneway_t, SupportableProperties...>
-        || !contains_exact_property_v<single_t, SupportableProperties...>>::type
-  {
-    assert(0);
-  }
-
-  virtual void execute(std::unique_ptr<oneway_func_base> f)
-  {
-    this->execute_helper<>(f);
-  }
-
-  template<class T, class U> auto twoway_execute_helper(T&& f, U&& then)
-    -> typename std::enable_if<std::is_same<T, T>::value
-      && contains_exact_property_v<twoway_t, SupportableProperties...>
-        && contains_exact_property_v<single_t, SupportableProperties...>>::type
-  {
-    executor_.twoway_execute(
-        [f = std::move(f)]() mutable
-        {
-          return f.release()->call();
-        })
-    .then(
-        [then = std::move(then)](auto fut) mutable
-        {
-          std::shared_ptr<void> result;
-          std::exception_ptr excep;
-          try { result = fut.get(); } catch (...) { excep = std::current_exception(); }
-          then.release()->call(result, excep);
-        });
-  }
-
-  template<class T, class U> auto twoway_execute_helper(T&&, U&&)
-    -> typename std::enable_if<!std::is_same<T, T>::value
-      || !contains_exact_property_v<twoway_t, SupportableProperties...>
-        || !contains_exact_property_v<single_t, SupportableProperties...>>::type
-  {
-    assert(0);
-  }
-
-  virtual void twoway_execute(std::unique_ptr<twoway_func_base> f, std::unique_ptr<twoway_then_func_base> then)
-  {
-    this->twoway_execute_helper<>(f, then);
-  }
-
-  template<class T, class U, class V>
-  auto bulk_execute_helper(T&& f, U&& n, V&& sf)
-    -> typename std::enable_if<std::is_same<T, T>::value
-      && contains_exact_property_v<oneway_t, SupportableProperties...>
-        && contains_exact_property_v<bulk_t, SupportableProperties...>>::type
-  {
-    executor_.bulk_execute(
-        [f = std::move(f)](std::size_t i, auto s) mutable { f->call(i, s); }, n,
-        [sf = std::move(sf)]() mutable { return sf->call(); });
-  }
-
-  template<class T, class U, class V>
-  auto bulk_execute_helper(T&&, U&&, V&&)
-    -> typename std::enable_if<!std::is_same<T, T>::value
-      || !contains_exact_property_v<oneway_t, SupportableProperties...>
-        || !contains_exact_property_v<bulk_t, SupportableProperties...>>::type
-  {
-    assert(0);
-  }
-
-  virtual void bulk_execute(std::unique_ptr<bulk_func_base> f, std::size_t n, std::shared_ptr<shared_factory_base> sf)
-  {
-    this->bulk_execute_helper<>(f, n, sf);
-  }
+//  template<class T, class U> auto twoway_execute_helper(T&& f, U&& then)
+//    -> typename std::enable_if<std::is_same<T, T>::value
+//      && contains_exact_property_v<twoway_t, SupportableProperties...>
+//        && contains_exact_property_v<single_t, SupportableProperties...>>::type
+//  {
+//    executor_.twoway_execute(
+//        [f = std::move(f)]() mutable
+//        {
+//          return f.release()->call();
+//        })
+//    .then(
+//        [then = std::move(then)](auto fut) mutable
+//        {
+//          std::shared_ptr<void> result;
+//          std::exception_ptr excep;
+//          try { result = fut.get(); } catch (...) { excep = std::current_exception(); }
+//          then.release()->call(result, excep);
+//        });
+//  }
+//
+//  template<class T, class U> auto twoway_execute_helper(T&&, U&&)
+//    -> typename std::enable_if<!std::is_same<T, T>::value
+//      || !contains_exact_property_v<twoway_t, SupportableProperties...>
+//        || !contains_exact_property_v<single_t, SupportableProperties...>>::type
+//  {
+//    assert(0);
+//  }
+//
+//  virtual void twoway_execute(std::unique_ptr<twoway_func_base> f, std::unique_ptr<twoway_then_func_base> then)
+//  {
+//    this->twoway_execute_helper<>(f, then);
+//  }
+//
+//  template<class T, class U, class V>
+//  auto bulk_execute_helper(T&& f, U&& n, V&& sf)
+//    -> typename std::enable_if<std::is_same<T, T>::value
+//      && contains_exact_property_v<oneway_t, SupportableProperties...>
+//        && contains_exact_property_v<bulk_t, SupportableProperties...>>::type
+//  {
+//    executor_.bulk_execute(
+//        [f = std::move(f)](std::size_t i, auto s) mutable { f->call(i, s); }, n,
+//        [sf = std::move(sf)]() mutable { return sf->call(); });
+//  }
+//
+//  template<class T, class U, class V>
+//  auto bulk_execute_helper(T&&, U&&, V&&)
+//    -> typename std::enable_if<!std::is_same<T, T>::value
+//      || !contains_exact_property_v<oneway_t, SupportableProperties...>
+//        || !contains_exact_property_v<bulk_t, SupportableProperties...>>::type
+//  {
+//    assert(0);
+//  }
+//
+//  virtual void bulk_execute(std::unique_ptr<bulk_func_base> f, std::size_t n, std::shared_ptr<shared_factory_base> sf)
+//  {
+//    this->bulk_execute_helper<>(f, n, sf);
+//  }
 
   virtual const type_info& target_type() const
   {
@@ -296,7 +358,7 @@ struct impl : impl_base
     return &executor_;
   }
 
-  virtual bool equals(const impl_base* e) const noexcept
+  virtual bool equals(const base_t* e) const noexcept
   {
     if (this == e)
       return true;
@@ -305,14 +367,14 @@ struct impl : impl_base
     return executor_ == *static_cast<const Executor*>(e->target());
   }
 
-  impl_base* require_helper(property_list<>, const type_info&, const void*) const
+  base_t* require_helper(property_list<>, const type_info&, const void*) const
   {
     assert(0);
     return nullptr;
   }
 
   template<class Head, class... Tail>
-  impl_base* require_helper(property_list<Head, Tail...>, const type_info& t, const void* p, typename std::enable_if<Head::is_requirable>::type* = 0) const
+  base_t* require_helper(property_list<Head, Tail...>, const type_info& t, const void* p, typename std::enable_if<Head::is_requirable>::type* = 0) const
   {
     if (t == typeid(Head))
     {
@@ -323,42 +385,44 @@ struct impl : impl_base
   }
 
   template<class Head, class... Tail>
-  impl_base* require_helper(property_list<Head, Tail...>, const type_info& t, const void* p, typename std::enable_if<!Head::is_requirable>::type* = 0) const
+  base_t* require_helper(property_list<Head, Tail...>, const type_info& t, const void* p, typename std::enable_if<!Head::is_requirable>::type* = 0) const
   {
     return require_helper(property_list<Tail...>{}, t, p);
   }
 
-  virtual impl_base* require(const type_info& t, const void* p) const
+  virtual base_t* require(const type_info& t, const void* p) const
   {
     return this->require_helper(property_list<SupportableProperties...>{}, t, p);
   }
 
-  impl_base* prefer_helper(property_list<>, const type_info&, const void*) const
-  {
-    return clone();
-  }
+  // TODO make these use move semantics
 
-  template<class Head, class... Tail>
-  impl_base* prefer_helper(property_list<Head, Tail...>, const type_info& t, const void* p, typename std::enable_if<Head::is_preferable>::type* = 0) const
-  {
-    if (t == typeid(Head))
-    {
-      using executor_type = decltype(execution::prefer(executor_, *static_cast<const Head*>(p)));
-      return new impl<executor_type, SupportableProperties...>(execution::prefer(executor_, *static_cast<const Head*>(p)));
-    }
-    return prefer_helper(property_list<Tail...>{}, t, p);
-  }
-
-  template<class Head, class... Tail>
-  impl_base* prefer_helper(property_list<Head, Tail...>, const type_info& t, const void* p, typename std::enable_if<!Head::is_preferable>::type* = 0) const
-  {
-    return prefer_helper(property_list<Tail...>{}, t, p);
-  }
-
-  virtual impl_base* prefer(const type_info& t, const void* p) const
-  {
-    return this->prefer_helper(property_list<SupportableProperties...>{}, t, p);
-  }
+//  impl_base* prefer_helper(property_list<>, const type_info&, const void*) const
+//  {
+//    return clone();
+//  }
+//
+//  template<class Head, class... Tail>
+//  impl_base* prefer_helper(property_list<Head, Tail...>, const type_info& t, const void* p, typename std::enable_if<Head::is_preferable>::type* = 0) const
+//  {
+//    if (t == typeid(Head))
+//    {
+//      using executor_type = decltype(execution::prefer(executor_, *static_cast<const Head*>(p)));
+//      return new impl<executor_type, SupportableProperties...>(execution::prefer(executor_, *static_cast<const Head*>(p)));
+//    }
+//    return prefer_helper(property_list<Tail...>{}, t, p);
+//  }
+//
+//  template<class Head, class... Tail>
+//  impl_base* prefer_helper(property_list<Head, Tail...>, const type_info& t, const void* p, typename std::enable_if<!Head::is_preferable>::type* = 0) const
+//  {
+//    return prefer_helper(property_list<Tail...>{}, t, p);
+//  }
+//
+//  virtual impl_base* prefer(const type_info& t, const void* p) const
+//  {
+//    return this->prefer_helper(property_list<SupportableProperties...>{}, t, p);
+//  }
 
   void* query_helper(property_list<>, const type_info&, const void*) const
   {
@@ -387,10 +451,21 @@ struct impl : impl_base
 
 } // namespace executor_impl
 
-template<class... SupportableProperties>
+// TODO write a shared_executor wrapper also?
+template<class T, class E, class... SupportableProperties>
 class executor
 {
+  // TODO (maybe) parse through the properties to see if there is one that indicates the subexecutor type???
+  using value_subexecutor_t = executor<void, E, SupportableProperties...>;
+  using error_subexecutor_t = executor<void, E, SupportableProperties...>;
+  using polymorphic_executor_continuation_t = executor_impl::single_use_continuation_base<
+    T, E, void, void, value_subexecutor_t, error_subexecutor_t
+  >;
 public:
+
+  using value_type = T;
+  using error_type = E;
+
   // construct / copy / destroy:
 
   executor() noexcept
@@ -403,10 +478,7 @@ public:
   {
   }
 
-  executor(const executor& e) noexcept
-    : impl_(e.impl_ ? e.impl_->clone() : nullptr)
-  {
-  }
+  executor(const executor& e) = delete;
 
   executor(executor&& e) noexcept
     : impl_(e.impl_)
@@ -414,29 +486,29 @@ public:
     e.impl_ = nullptr;
   }
 
-  template<class Executor> executor(Executor e,
+  template<class Executor>
+  executor(Executor e,
       typename std::enable_if<executor_impl::is_valid_target_v<
-        Executor, SupportableProperties...>>::type* = 0)
+        Executor, T, E, value_subexecutor_t, error_subexecutor_t, SupportableProperties...
+      >>::type* = 0
+  )
   {
-    auto e2 = execution::require(std::move(e),
-        executor_impl::conditional_property_t<single_t, SupportableProperties...>{},
-        executor_impl::conditional_property_t<bulk_t, SupportableProperties...>{},
-        executor_impl::conditional_property_t<oneway_t, SupportableProperties...>{},
-        executor_impl::conditional_property_t<twoway_t, SupportableProperties...>{});
-    impl_ = new executor_impl::impl<decltype(e2), SupportableProperties...>(std::move(e2));
+    impl_ = new executor_impl::impl<Executor, SupportableProperties...>(std::move(e));
   }
 
+  // move-from-compatible ctor
   template<class... OtherSupportableProperties>
-  executor(executor<OtherSupportableProperties...> e,
+  executor(executor<T, E, OtherSupportableProperties...>&& e,
       typename std::enable_if<executor_impl::contains_exact_property_list_v<
         executor_impl::property_list<SupportableProperties...>,
-          OtherSupportableProperties...>>::type* = 0)
-    : impl_(e.impl_ ? e.impl_->clone() : nullptr)
+          OtherSupportableProperties...>>::type* = 0) noexcept
+    : impl_(std::move(e.impl_))
   {
+    e.impl_ = nullptr;
   }
 
   template<class... OtherSupportableProperties>
-  executor(executor<OtherSupportableProperties...> e,
+  executor(executor<T, E, OtherSupportableProperties...>&& e,
       typename std::enable_if<!executor_impl::contains_exact_property_list_v<
         executor_impl::property_list<SupportableProperties...>,
           OtherSupportableProperties...>>::type* = 0) = delete;
@@ -538,102 +610,97 @@ public:
     return std::get<0>(*result);
   }
 
-  template<class Function,
-    class = typename std::enable_if<std::is_same<Function, Function>::value
-      && executor_impl::contains_exact_property_v<oneway_t, SupportableProperties...>
-        && executor_impl::contains_exact_property_v<single_t, SupportableProperties...>>::type>
-  void execute(Function f) const
+  template<class Continuation>
+  void execute(Continuation c) const
   {
-    std::unique_ptr<executor_impl::oneway_func_base> fp(new executor_impl::oneway_func<Function>(std::move(f)));
-    impl_ ? impl_->execute(std::move(fp)) : throw bad_executor();
+    using continuation_impl_t = executor_impl::impl<Continuation, T, E, void, void, value_subexecutor_t, error_subexecutor_t>;
+    std::unique_ptr<polymorphic_executor_continuation_t> cp(
+      new continuation_impl_t(std::move(c))
+    );
+    impl_ ? impl_->execute(std::move(cp)) : throw bad_executor();
   }
 
-  template<class Function,
-    class = typename std::enable_if<std::is_same<Function, Function>::value &&
-      executor_impl::contains_exact_property_v<twoway_t, SupportableProperties...>
-        && executor_impl::contains_exact_property_v<single_t, SupportableProperties...>>::type>
-  auto twoway_execute(Function f) const
-    -> typename std::enable_if<std::is_same<decltype(f()), void>::value, future<void>>::type
-  {
-    promise<void> prom;
-    future<void> fut(prom.get_future());
-
-    auto f_wrap = [f = std::move(f)]() mutable
-    {
-      f();
-      return std::shared_ptr<void>();
-    };
-
-    auto then = [prom = std::move(prom)](std::shared_ptr<void>, std::exception_ptr excep) mutable
-    {
-      if (excep)
-        prom.set_exception(excep);
-      else
-        prom.set_value();
-    };
-
-    std::unique_ptr<executor_impl::twoway_func_base> fp(new executor_impl::twoway_func<decltype(f_wrap)>(std::move(f_wrap)));
-    std::unique_ptr<executor_impl::twoway_then_func_base> tp(new executor_impl::twoway_then_func<decltype(then)>(std::move(then)));
-    impl_ ? impl_->twoway_execute(std::move(fp), std::move(tp)) : throw bad_executor();
-
-    return fut;
-  }
-
-  template<class Function,
-    class = typename std::enable_if<std::is_same<Function, Function>::value &&
-      executor_impl::contains_exact_property_v<twoway_t, SupportableProperties...>
-        && executor_impl::contains_exact_property_v<single_t, SupportableProperties...>>::type>
-  auto twoway_execute(Function f) const
-    -> typename std::enable_if<!std::is_same<decltype(f()), void>::value, future<decltype(f())>>::type
-  {
-    promise<decltype(f())> prom;
-    future<decltype(f())> fut(prom.get_future());
-
-    auto f_wrap = [f = std::move(f)]() mutable
-    {
-      return std::make_shared<decltype(f())>(f());
-    };
-
-    auto then = [prom = std::move(prom)](std::shared_ptr<void> result, std::exception_ptr excep) mutable
-    {
-      if (excep)
-        prom.set_exception(excep);
-      else
-        prom.set_value(std::move(*std::static_pointer_cast<decltype(f())>(result)));
-    };
-
-    std::unique_ptr<executor_impl::twoway_func_base> fp(new executor_impl::twoway_func<decltype(f_wrap)>(std::move(f_wrap)));
-    std::unique_ptr<executor_impl::twoway_then_func_base> tp(new executor_impl::twoway_then_func<decltype(then)>(std::move(then)));
-    impl_ ? impl_->twoway_execute(std::move(fp), std::move(tp)) : throw bad_executor();
-
-    return fut;
-  }
-
-  template<class Function, class SharedFactory,
-    class = typename std::enable_if<std::is_same<Function, Function>::value &&
-      executor_impl::contains_exact_property_v<oneway_t, SupportableProperties...>
-        && executor_impl::contains_exact_property_v<bulk_t, SupportableProperties...>>::type>
-  void bulk_execute(Function f, std::size_t n, SharedFactory sf) const
-  {
-    auto f_wrap = [f = std::move(f)](std::size_t i, std::shared_ptr<void>& ss) mutable
-    {
-      f(i, *std::static_pointer_cast<decltype(sf())>(ss));
-    };
-
-    auto sf_wrap = [sf = std::move(sf)]() mutable
-    {
-      return std::make_shared<decltype(sf())>(sf());
-    };
-
-    std::unique_ptr<executor_impl::bulk_func_base> fp(new executor_impl::bulk_func<decltype(f_wrap)>(std::move(f_wrap)));
-    std::shared_ptr<executor_impl::shared_factory_base> sfp(new executor_impl::shared_factory<decltype(sf_wrap)>(std::move(sf_wrap)));
-    impl_ ? impl_->bulk_execute(std::move(fp), n, std::move(sfp)) : throw bad_executor();
-  }
-
-#if 0 // TODO implement bulk two-way support.
-  template<class Function, class ResultFactory, class SharedFactory>
-    auto bulk_twoway_execute(Function f, std::size_t n, ResultFactory rf, SharedFactory sf) const -> future<decltype(rf())>;
-#endif
+//  template<class Function,
+//    class = typename std::enable_if<std::is_same<Function, Function>::value &&
+//      executor_impl::contains_exact_property_v<twoway_t, SupportableProperties...>
+//        && executor_impl::contains_exact_property_v<single_t, SupportableProperties...>>::type>
+//  auto twoway_execute(Function f) const
+//    -> typename std::enable_if<std::is_same<decltype(f()), void>::value, future<void>>::type
+//  {
+//    promise<void> prom;
+//    future<void> fut(prom.get_future());
+//
+//    auto f_wrap = [f = std::move(f)]() mutable
+//    {
+//      f();
+//      return std::shared_ptr<void>();
+//    };
+//
+//    auto then = [prom = std::move(prom)](std::shared_ptr<void>, std::exception_ptr excep) mutable
+//    {
+//      if (excep)
+//        prom.set_exception(excep);
+//      else
+//        prom.set_value();
+//    };
+//
+//    std::unique_ptr<executor_impl::twoway_func_base> fp(new executor_impl::twoway_func<decltype(f_wrap)>(std::move(f_wrap)));
+//    std::unique_ptr<executor_impl::twoway_then_func_base> tp(new executor_impl::twoway_then_func<decltype(then)>(std::move(then)));
+//    impl_ ? impl_->twoway_execute(std::move(fp), std::move(tp)) : throw bad_executor();
+//
+//    return fut;
+//  }
+//
+//  template<class Function,
+//    class = typename std::enable_if<std::is_same<Function, Function>::value &&
+//      executor_impl::contains_exact_property_v<twoway_t, SupportableProperties...>
+//        && executor_impl::contains_exact_property_v<single_t, SupportableProperties...>>::type>
+//  auto twoway_execute(Function f) const
+//    -> typename std::enable_if<!std::is_same<decltype(f()), void>::value, future<decltype(f())>>::type
+//  {
+//    promise<decltype(f())> prom;
+//    future<decltype(f())> fut(prom.get_future());
+//
+//    auto f_wrap = [f = std::move(f)]() mutable
+//    {
+//      return std::make_shared<decltype(f())>(f());
+//    };
+//
+//    auto then = [prom = std::move(prom)](std::shared_ptr<void> result, std::exception_ptr excep) mutable
+//    {
+//      if (excep)
+//        prom.set_exception(excep);
+//      else
+//        prom.set_value(std::move(*std::static_pointer_cast<decltype(f())>(result)));
+//    };
+//
+//    std::unique_ptr<executor_impl::twoway_func_base> fp(new executor_impl::twoway_func<decltype(f_wrap)>(std::move(f_wrap)));
+//    std::unique_ptr<executor_impl::twoway_then_func_base> tp(new executor_impl::twoway_then_func<decltype(then)>(std::move(then)));
+//    impl_ ? impl_->twoway_execute(std::move(fp), std::move(tp)) : throw bad_executor();
+//
+//    return fut;
+//  }
+//
+//  template<class Function, class SharedFactory,
+//    class = typename std::enable_if<std::is_same<Function, Function>::value &&
+//      executor_impl::contains_exact_property_v<oneway_t, SupportableProperties...>
+//        && executor_impl::contains_exact_property_v<bulk_t, SupportableProperties...>>::type>
+//  void bulk_execute(Function f, std::size_t n, SharedFactory sf) const
+//  {
+//    auto f_wrap = [f = std::move(f)](std::size_t i, std::shared_ptr<void>& ss) mutable
+//    {
+//      f(i, *std::static_pointer_cast<decltype(sf())>(ss));
+//    };
+//
+//    auto sf_wrap = [sf = std::move(sf)]() mutable
+//    {
+//      return std::make_shared<decltype(sf())>(sf());
+//    };
+//
+//    std::unique_ptr<executor_impl::bulk_func_base> fp(new executor_impl::bulk_func<decltype(f_wrap)>(std::move(f_wrap)));
+//    std::shared_ptr<executor_impl::shared_factory_base> sfp(new executor_impl::shared_factory<decltype(sf_wrap)>(std::move(sf_wrap)));
+//    impl_ ? impl_->bulk_execute(std::move(fp), n, std::move(sfp)) : throw bad_executor();
+//  }
 
   // polymorphic executor capacity:
 
@@ -661,7 +728,7 @@ public:
 
   // polymorphic executor comparisons:
 
-  friend bool operator==(const executor& a, const executor& b) noexcept
+  friend auto operator==(const executor& a, const executor& b) noexcept
   {
     if (!a.get_impl() && !b.get_impl())
       return true;
@@ -669,6 +736,40 @@ public:
       return a.get_impl()->equals(b.get_impl());
     return false;
   }
+
+  template <typename... OtherSupportableProperties>
+  friend auto operator==(const executor& a, const executor<T, E, OtherSupportableProperties...>& b) noexcept
+    -> enable_if_t<
+         !is_same_v<
+           executor_impl::property_list<OtherSupportableProperties...>,
+           executor_impl::property_list<SupportableProperties...>
+         >,
+         bool
+       >
+  {
+    if (!a.get_impl() && !b.get_impl())
+      return true;
+    if (a.get_impl() && b.get_impl())
+      return a.get_impl()->equals(b.get_impl());
+    return false;
+  }
+
+  template <typename... OtherSupportableProperties>
+  friend auto operator!=(const executor& a, const executor<T, E, OtherSupportableProperties...>& b) noexcept
+    -> enable_if_t<
+         !is_same_v<
+           executor_impl::property_list<OtherSupportableProperties...>,
+           executor_impl::property_list<SupportableProperties...>
+         >,
+         bool
+       >
+  {
+    return !(a == b);
+  }
+
+  // Definition is in the other supported properties implementation, but we need to declare it a friend here
+  //template <typename... OtherSupportedProperties>
+  //friend bool operator==(const executor<T, E, OtherSupportedProperties...>& b, const executor& a) noexcept;
 
   friend bool operator==(const executor& e, nullptr_t) noexcept
   {
@@ -696,10 +797,10 @@ public:
   }
 
 private:
-  template<class...> friend class executor;
-  executor(executor_impl::impl_base* i) noexcept : impl_(i) {}
-  executor_impl::impl_base* impl_;
-  const executor_impl::impl_base* get_impl() const { return impl_; }
+  template<class, class, class...> friend class executor;
+  executor(executor_impl::impl_base<T, E, value_subexecutor_t>* i) noexcept : impl_(i) {}
+  executor_impl::impl_base<T, E, value_subexecutor_t>* impl_;
+  const executor_impl::impl_base<T, E, value_subexecutor_t>* get_impl() const { return impl_; }
 };
 
 // executor specialized algorithms:

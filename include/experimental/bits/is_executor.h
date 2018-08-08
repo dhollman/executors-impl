@@ -15,6 +15,11 @@ struct _exemplar_void_continuation {
 	void value(T&&, VSubEx&&) && { }
 	void error(E&&, ESubEx&&) && { }
 };
+template <class E, class VSubEx, class ESubEx>
+struct _exemplar_void_continuation<void, E, VSubEx, ESubEx> {
+	void value(VSubEx&&) && { }
+	void error(E&&, ESubEx&&) && { }
+};
 
 template<class Executor, class T, class E, class VSubEx, class ESubEx, class = std::void_t<>>
 struct eval : std::false_type {};

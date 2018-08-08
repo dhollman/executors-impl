@@ -76,7 +76,7 @@ struct mapping_t;
 // Memory allocations.
 template<class ProtoAllocator> struct allocator_t;
 
-template<class T=void, class E=exception_ptr, class VSubEx=void, class ESubEx=void>
+template<class VSubEx=void, class ESubEx=void>
 struct then_t;
 
 // Type traits to determine conformance to executor type requirements.
@@ -91,10 +91,21 @@ constexpr bool is_executor_v = is_executor<Executor, T, E, VSubEx, ESubEx>::valu
 template<class Executor, class T=void, class E=exception_ptr, class R=void, class S=exception_ptr, class VSubEx=Executor, class ESubEx=Executor, class RetEx=Executor>
 constexpr bool is_then_executor_v = is_then_executor<Executor, T, E, VSubEx, ESubEx>::value;
 
+template <typename Executor>
+struct executor_value;
+template <typename Executor>
+struct executor_error;
+
+
+template <typename Executor>
+using executor_value_t = typename executor_value<Executor>::type;
+template <typename Executor>
+using executor_error_t = typename executor_error<Executor>::type;
+
 // Polymorphic wrappers.
-//class bad_executor;
-//template<class... SupportableProperties> class executor;
-//template<class InnerProperty> struct prefer_only;
+class bad_executor;
+template<class T, class E, class... SupportableProperties> class executor;
+template<class InnerProperty> struct prefer_only;
 
 // helpers functions
 template <class TypeForVoid=monostate, class ValueCallable, class ErrorCallable, class... Args>
@@ -126,6 +137,8 @@ inline auto on_error_with_subexecutor(BinaryCallable&& nc);
 #include <experimental/bits/is_continuation.h>
 #include <experimental/bits/is_executor.h>
 #include <experimental/bits/is_then_executor.h>
+#include <experimental/bits/executor_value.h>
+#include <experimental/bits/executor_error.h>
 
 #include <experimental/bits/then.h>
 
@@ -141,8 +154,8 @@ inline auto on_error_with_subexecutor(BinaryCallable&& nc);
 #include <experimental/bits/allocator.h>
 
 
-//#include <experimental/bits/executor.h>
-//#include <experimental/bits/prefer_only.h>
+#include <experimental/bits/executor.h>
+#include <experimental/bits/prefer_only.h>
 
 
 #endif // STD_EXPERIMENTAL_EXECUTION
