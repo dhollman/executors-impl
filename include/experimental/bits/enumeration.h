@@ -74,14 +74,21 @@ struct enumeration
     static constexpr bool is_requirable = true;
     static constexpr bool is_preferable = true;
 
+    using Base =
+      std::conditional_t<
+        Value == 0,
+        default_enumerator<enumerator<Value> >,
+        non_default_enumerator<enumerator<Value> >
+      >;
+
     using polymorphic_query_result_type = Derived;
 
     template<class Executor,
       class T = std::enable_if_t<
-        (enumerator::template static_query<Executor>(), true),
-        decltype(enumerator::template static_query<Executor>())
+        (Base::template static_query<Executor>(), true),
+        decltype(Base::template static_query<Executor>())
       >>
-    static constexpr T static_query_v = enumerator::template static_query<Executor>();
+    static constexpr T static_query_v = Base::template static_query<Executor>();
 
     static constexpr Derived value()
     {
