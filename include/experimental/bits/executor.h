@@ -387,7 +387,7 @@ struct impl : impl_base<executor_value_t<Executor>, executor_error_t<Executor>>
   void* query_helper(property_list<Head, Tail...>, const type_info& t, const void* p, typename std::enable_if<can_query_v<Executor, Head>>::type* = 0) const
   {
     if (t == typeid(Head))
-      return new std::tuple<typename Head::polymorphic_query_result_type>(execution::query(executor_, *static_cast<const Head*>(p)));
+      return new std::tuple<typename Head::template polymorphic_query_result_type<value_t, error_t, SupportableProperties...>>(execution::query(executor_, *static_cast<const Head*>(p)));
     return query_helper(property_list<Tail...>{}, t, p);
   }
 
@@ -524,10 +524,10 @@ public:
     -> typename std::enable_if<
       executor_impl::find_convertible_property_t<Property, SupportableProperties...>::is_requirable
         || executor_impl::find_convertible_property_t<Property, SupportableProperties...>::is_preferable,
-      typename executor_impl::find_convertible_property_t<Property, SupportableProperties...>::polymorphic_query_result_type>::type
+      typename executor_impl::find_convertible_property_t<Property, SupportableProperties...>::template polymorphic_query_result_type<T, E, SupportableProperties...>>::type
   {
     executor_impl::find_convertible_property_t<Property, SupportableProperties...> p1(p);
-    using result_type = typename decltype(p1)::polymorphic_query_result_type;
+    using result_type = typename decltype(p1)::template polymorphic_query_result_type<T, E, SupportableProperties...>;
     using tuple_type = std::tuple<result_type>;
     if (!impl_) throw bad_executor();
     std::unique_ptr<tuple_type> result(static_cast<tuple_type*>(impl_->query(typeid(p1), &p1)));
@@ -539,10 +539,10 @@ public:
     -> typename std::enable_if<
       !executor_impl::find_convertible_property_t<Property, SupportableProperties...>::is_requirable
         && !executor_impl::find_convertible_property_t<Property, SupportableProperties...>::is_preferable,
-      typename executor_impl::find_convertible_property_t<Property, SupportableProperties...>::polymorphic_query_result_type>::type
+      typename executor_impl::find_convertible_property_t<Property, SupportableProperties...>::template polymorphic_query_result_type<T, E, SupportableProperties...>>::type
   {
     executor_impl::find_convertible_property_t<Property, SupportableProperties...> p1(p);
-    using result_type = typename decltype(p1)::polymorphic_query_result_type;
+    using result_type = typename decltype(p1)::template polymorphic_query_result_type<T, E, SupportableProperties...>;
     using tuple_type = std::tuple<result_type>;
     if (!impl_) throw bad_executor();
     std::unique_ptr<tuple_type> result(static_cast<tuple_type*>(impl_->query(typeid(p1), &p1)));
@@ -623,10 +623,6 @@ public:
   {
     return !(a == b);
   }
-
-  // Definition is in the other supported properties implementation, but we need to declare it a friend here
-  //template <typename... OtherSupportedProperties>
-  //friend bool operator==(const executor<T, E, OtherSupportedProperties...>& b, const executor& a) noexcept;
 
   friend bool operator==(const executor& e, nullptr_t) noexcept
   {

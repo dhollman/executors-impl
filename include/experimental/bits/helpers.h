@@ -175,7 +175,9 @@ template <class TypeForVoid=monostate, class ValueCallable, class ErrorCallable,
 inline auto make_continuation(
   ValueCallable&& vc, ErrorCallable&& ec, Args&&... args
 ) {
-  return continuation_with_args_impl(
+  return helpers_impl::continuation_with_args_impl<
+    decay_t<ValueCallable>, decay_t<ErrorCallable>, TypeForVoid, decay_t<Args>...
+  >(
     forward<ValueCallable>(vc), forward<ErrorCallable>(ec), forward<Args>(args)...
   );
 }

@@ -1,6 +1,11 @@
 #ifndef STD_EXPERIMENTAL_BITS_PREFER_ONLY_H
 #define STD_EXPERIMENTAL_BITS_PREFER_ONLY_H
 
+#include <experimental/execution>
+
+#include <exception> // exception_ptr
+#include <type_traits> // declval
+
 namespace std {
 namespace experimental {
 inline namespace executors_v1 {
@@ -18,10 +23,11 @@ struct prefer_only_base {};
 
 template<class InnerProperty>
 struct prefer_only_base<InnerProperty,
-  typename type_check<typename InnerProperty::polymorphic_query_result_type>::type>
+  typename type_check<typename InnerProperty::template polymorphic_query_result_type<void, std::exception_ptr>>::type>
 {
+  template <class T, class E, class... SupportableProperties>
   using polymorphic_query_result_type =
-    typename InnerProperty::polymorphic_query_result_type;
+    typename InnerProperty::template polymorphic_query_result_type<T, E, SupportableProperties...>;
 };
 
 template<class, class InnerProperty>

@@ -78,6 +78,9 @@ template<class ProtoAllocator> struct allocator_t;
 
 struct then_t;
 
+template <class T, class E>
+struct executor_factory_t;
+
 // Type traits to determine conformance to executor type requirements.
 template<class Executor, class T, class E, typename R, typename S> struct is_continuation;
 template<class Executor, class T, class E> struct is_executor;
@@ -132,6 +135,8 @@ inline auto on_error(UnaryCallable&& nc);
 #include <experimental/bits/is_then_executor.h>
 #include <experimental/bits/executor_value.h>
 #include <experimental/bits/executor_error.h>
+
+#include <experimental/bits/executor_factory.h>
 
 #include <experimental/bits/then.h>
 

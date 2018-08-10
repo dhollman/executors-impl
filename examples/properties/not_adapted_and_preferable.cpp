@@ -11,6 +11,7 @@ namespace custom_props
   {
     static constexpr bool is_requirable = true;
     static constexpr bool is_preferable = true;
+    template <class T, class E, class... SupportableProperties>
     using polymorphic_query_result_type = bool;
 
     bool on = false;

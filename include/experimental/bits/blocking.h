@@ -5,8 +5,11 @@
 #include <experimental/bits/helpers.h>
 #include <experimental/bits/enumeration.h>
 #include <experimental/bits/enumerator_adapter.h>
+
+#include <experimental/execution>
+
 #include <future>
-#include <any>
+#include <cassert>
 
 namespace std {
 namespace experimental {
@@ -43,11 +46,65 @@ auto _make_blocking_continuation(Continuation&& c, Promise&& p) {
   );
 }
 
-struct any_then_value_executor {
-  std::any value;
+template <class ValueExecutor, class ErrorExecutor>
+struct variant_executor_adapter {
+  variant<ValueExecutor, ErrorExecutor> ex_;
 
+  using value_type = executor_value_t<ValueExecutor>;
+  using error_type = executor_error_t<ErrorExecutor>;
 
+  template <typename Property>
+  auto require(const Property& p) &&
+    // TODO noexcept specification
+    -> variant_executor_adapter<
+         decltype(execution::require(declval<ValueExecutor>, declval<Property>)),
+         decltype(execution::require(declval<ErrorExecutor>, declval<Property>))
+       >
+  {
+    if(auto* ex = std::get_if<ValueExecutor>(&ex_)) {
+      return execution::require(std::move(*ex), p);
+    }
+    else {
+      auto* err_ex = std::get_if<ErrorExecutor>(&ex_);
+      assert(err_ex);
+      return execution::require(std::move(*err_ex), p);
+    }
+  }
+
+  template <typename Property>
+  constexpr auto query(const Property& p) const
+    // TODO noexcept specification
+    -> enable_if_t<
+         is_same_v<
+           decltype(execution::query(declval<ValueExecutor const&>, declval<Property>)),
+           decltype(execution::query(declval<ErrorExecutor const&>, declval<Property>))
+         >,
+         decltype(execution::query(declval<ValueExecutor>, declval<Property>))
+       >
+  {
+    if(auto* ex = std::get_if<ValueExecutor>(&ex_)) {
+      return execution::query(*ex, p);
+    }
+    else {
+      auto* err_ex = std::get_if<ErrorExecutor>(&ex_);
+      assert(err_ex);
+      return execution::query(*err_ex, p);
+    }
+  }
+
+  template <typename Continuation>
+  void execute(Continuation&& c) && {
+    if(auto* ex = std::get_if<ValueExecutor>(&ex_)) {
+      std::move(*ex).execute(forward<Continuation>(c));
+    }
+    else {
+      auto* err_ex = std::get_if<ErrorExecutor>(&ex_);
+      assert(ex);
+      std::move(*err_ex).execute(forward<Continuation>(c));
+    }
+  }
 };
+
 
 } // end namespace blocking_t_impl
 
@@ -71,7 +128,6 @@ private:
   {
     template <class T> static auto inner_declval() -> decltype(std::declval<Executor>());
 
-
     template <typename ExecutorDeduced, typename Continuation>
     static auto _do_execute(ExecutorDeduced&& ex, Continuation&& c) {
       promise<void> promise;
@@ -83,6 +139,49 @@ private:
       future.wait();
     }
 
+
+    template <typename ExecutorDeduced, typename Continuation>
+    static auto _do_then_execute(ExecutorDeduced&& ex, Continuation&& c) {
+      promise<void> prom;
+      future<void> future = prom.get_future();
+
+      using value_t = executor_value_t<Executor>;
+      using error_t = executor_error_t<Executor>;
+
+      auto return_factory = execution::query(ex, executor_factory<value_t, error_t>);
+
+      using value_executor_t = decay_t<decltype(return_factory.make_executor(declval<value_t>()))>;
+      using error_executor_t = decay_t<decltype(return_factory.make_error_executor(declval<error_t>()))>;
+
+      optional<blocking_t_impl::variant_executor_adapter<value_executor_t, error_executor_t>> rv;
+
+      std::forward<ExecutorDeduced>(ex).then_execute(
+        forward<Continuation>(c)
+      ).execute(execution::make_continuation(
+        [&](auto&& v) {
+          if constexpr (!is_same_v<decay_t<decltype(v)>, monostate>) {
+            rv = blocking_t_impl::variant_executor_adapter<value_executor_t, error_executor_t>{
+              return_factory.make_executor(forward<decltype(v)>(v))
+            };
+          }
+          else { /* constexpr value_t is void */
+            rv = blocking_t_impl::variant_executor_adapter<value_executor_t, error_executor_t>{
+              return_factory.make_executor()
+            };
+          }
+          prom.set_value();
+        },
+        [&](auto&& e) {
+          rv = blocking_t_impl::variant_executor_adapter<value_executor_t, error_executor_t>{
+            return_factory.make_error_executor(forward<decltype(e)>(e))
+          };
+          prom.set_value();
+        }
+      ));
+      future.wait();
+      return *rv;
+    }
+
   public:
     using impl::enumerator_adapter<adapter, Executor, blocking_t, always_t>::enumerator_adapter;
 
@@ -91,6 +190,15 @@ private:
       -> decltype(inner_declval<Continuation>().execute(std::forward<Continuation>(c)))
     {
       _do_execute(std::move(this->executor_), forward<Continuation>(c));
+    }
+
+    // TODO Constrain to executors that can call then_execute
+    template<class Continuation,
+      class=enable_if_t<can_require_v<Executor, then_t>>
+    >
+    auto then_execute(Continuation&& c) &&
+    {
+      return _do_then_execute(execution::require(std::move(this->executor_), then), forward<Continuation>(c));
     }
   };
 

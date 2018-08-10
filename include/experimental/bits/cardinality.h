@@ -17,6 +17,7 @@ struct single_t
   static constexpr bool is_requirable = true;
   static constexpr bool is_preferable = false;
 
+  template <class T, class E, class... SupportableProperties>
   using polymorphic_query_result_type = bool;
 
   template<class Executor>
@@ -34,6 +35,7 @@ struct bulk_t
   static constexpr bool is_requirable = true;
   static constexpr bool is_preferable = false;
 
+  template <class T, class E, class... SupportableProperties>
   using polymorphic_query_result_type = bool;
 
   template<class Executor>

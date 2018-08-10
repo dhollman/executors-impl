@@ -54,8 +54,13 @@ struct adapted_then_continuation {
             nextval = std::move(pc_).value(forward<Value>(val));
           }
           catch(...) {
-            auto ex = std::move(cc_).error(std::current_exception());
-            if(ex) std::rethrow_exception(ex);
+            if constexpr (!is_void_v<decltype(std::move(cc_).error(std::current_exception()))>) {
+              auto ex = std::move(cc_).error(std::current_exception());
+              if(ex) std::rethrow_exception(ex);
+            }
+            else {
+              std::move(cc_).error(std::current_exception());
+            }
           }
           return std::move(cc_).value(std::move(*nextval));
         }
@@ -251,6 +256,7 @@ struct then_t
   static constexpr bool is_requirable = true;
   static constexpr bool is_preferable = false;
 
+  template <class T, class E, class... SupportableProperties>
   using polymorphic_query_result_type = bool;
 
   template<class Executor>
