@@ -21,7 +21,7 @@ void adapters_compile_test(Executor ex) {
   >);
 
 
-  auto then_e = execution::require(std::move(bl_e), execution::then<>);
+  auto then_e = execution::require(std::move(bl_e), execution::then);
 
   static_assert(std::is_same_v<
     execution::executor_value_t<Executor>,
