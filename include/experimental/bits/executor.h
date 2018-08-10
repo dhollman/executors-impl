@@ -275,7 +275,7 @@ struct impl_base
   virtual const void* target() const = 0;
   virtual bool equals(const impl_base* e) const noexcept = 0;
   virtual impl_base* require(const type_info&, const void* p) && = 0;
-  virtual impl_base* prefer(const type_info&, const void* p) const = 0;
+  virtual impl_base* prefer(const type_info&, const void* p) && = 0;
   virtual void* query(const type_info&, const void* p) const = 0;
 };
 
@@ -434,11 +434,7 @@ public:
 
   executor(const executor& e) = delete;
 
-  executor(executor&& e) noexcept
-    : impl_(e.impl_)
-  {
-    e.impl_ = nullptr;
-  }
+  executor(executor&& e) noexcept = default;
 
   template<class Executor>
   executor(Executor e,
@@ -505,7 +501,12 @@ public:
   executor require(const Property& p) &&
   {
     executor_impl::find_convertible_property_t<Property, SupportableProperties...> p1(p);
-    impl_ = impl_ ? std::move(*impl_).require(typeid(p1), &p1) : throw bad_executor();
+    if(impl_) {
+      impl_.reset(std::move(*impl_).require(typeid(p1), &p1));
+    }
+    else {
+      throw bad_executor();
+    }
     return std::move(impl_);
   }
 
@@ -515,7 +516,12 @@ public:
   friend executor prefer(executor&& e, const Property& p)
   {
     executor_impl::find_convertible_property_t<Property, SupportableProperties...> p1(p);
-    e.impl_ = e.get_impl() ? std::move(*e.impl_).prefer(typeid(p1), &p1) : throw bad_executor();
+    if(e.get_impl()) {
+      e.impl_.reset(std::move(*e.impl_).prefer(typeid(p1), &p1));
+    }
+    else {
+      throw bad_executor();
+    }
     return std::move(e.impl_);
   }
 

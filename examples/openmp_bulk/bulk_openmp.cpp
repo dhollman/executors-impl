@@ -22,7 +22,7 @@ struct OpenMPBulkExecutor {
     auto shape = c.shape();
     const auto chunk = shape / omp_get_max_threads();
     const auto extra = shape % (chunk * omp_get_max_threads());
-    #pragma omp parallel shared(sf, rf) copyin(chunk, extra, shape)
+    #pragma omp parallel shared(sf, rf)
     {
       auto my_chunk = chunk + (omp_get_thread_num() < extra);
       auto my_off = chunk * omp_get_thread_num() + min(omp_get_thread_num(), extra);
@@ -44,8 +44,8 @@ struct OpenMPBulkExecutor {
 
 template <typename BulkF>
 struct _on_bulk_void {
-  
 
+  // TODO figure out what the bulk helper function does
 
 };
 
