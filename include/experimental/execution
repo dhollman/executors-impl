@@ -82,12 +82,17 @@ template <class T, class E>
 struct executor_factory_t;
 
 // Type traits to determine conformance to executor type requirements.
-template<class Executor, class T, class E, typename R, typename S> struct is_continuation;
+template<class C, class T, class E, typename R, typename S> struct is_continuation;
+template <class C, class T, class E, class R, class S,
+  class Idx, class Shape, class ShVal, class ShErr, class RVal, class RErr> struct is_bulk_continuation;
 template<class Executor, class T, class E> struct is_executor;
 template<class Executor, class T, class E> struct is_then_executor;
 
-template<class Executor, class T, class E, typename R, typename S>
-constexpr bool is_continuation_v = is_continuation<Executor, T, E, R, S>::value;
+template<class C, class T, class E, typename R, typename S>
+constexpr bool is_continuation_v = is_continuation<C, T, E, R, S>::value;
+template <class C, class T, class E, class R, class S,
+  class Idx, class Shape, class ShVal, class ShErr, class RVal, class RErr>
+    constexpr bool is_bulk_continuation_v = is_bulk_continuation<C, T, E, R, S, Idx, Shape, ShVal, ShErr, RVal, RErr>::value;
 template<class Executor, class T=void, class E=exception_ptr>
 constexpr bool is_executor_v = is_executor<Executor, T, E>::value;
 template<class Executor, class T=void, class E=exception_ptr, class R=void, class S=exception_ptr>
@@ -131,6 +136,7 @@ inline auto on_error(UnaryCallable&& nc);
 #include <experimental/bits/can_prefer.h>
 #include <experimental/bits/can_query.h>
 #include <experimental/bits/is_continuation.h>
+#include <experimental/bits/bulk_continuation.h>
 #include <experimental/bits/is_executor.h>
 #include <experimental/bits/is_then_executor.h>
 #include <experimental/bits/executor_value.h>
