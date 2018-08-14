@@ -24,6 +24,10 @@ target_include_directories(executors INTERFACE
 
 target_compile_features(executors INTERFACE cxx_std_17)
 
+target_compile_options(executors INTERFACE
+    $<$<CXX_COMPILER_ID:GNU>:-fconcepts>
+)
+
 ################################################################################
 
 install(TARGETS executors EXPORT executorsTargets

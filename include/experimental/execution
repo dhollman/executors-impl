@@ -113,5 +113,6 @@ template<class InnerProperty> struct prefer_only;
 #include <experimental/bits/oneway_executor.h>
 #include <experimental/bits/bulk_oneway_executor.h>
 #include <experimental/bits/prefer_only.h>
+#include <experimental/bits/sender_receiver.h>
 
 #endif // STD_EXPERIMENTAL_EXECUTION
