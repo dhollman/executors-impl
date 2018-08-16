@@ -139,6 +139,7 @@ struct impl_base
   virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
   virtual void execute(std::unique_ptr<oneway_func_base> f) = 0;
+  //virtual any_none_sender<> make_value_task(std::unique_ptr<oneway_func_base> f) = 0;
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
   virtual const void* target() const = 0;
@@ -174,6 +175,13 @@ struct impl : impl_base
   {
     executor_.execute([f = std::move(f)]() mutable { f.release()->call(); });
   }
+
+  // virtual any_none_sender<> make_value_task(std::unique_ptr<oneway_func_base> f)
+  // {
+  //   return executor_.make_value_task(
+  //       [f = std::move(f)]() mutable { f.release()->call(); }
+  //     );
+  // }
 
   virtual const type_info& target_type() const
   {
@@ -348,6 +356,9 @@ public:
         typename std::enable_if<!std::is_same<Executor, polymorphic_executor_type>::value, Executor>::type,
         SupportableProperties...>>::type* = 0)
   {
+    // All valid Executors are single senders that send themselves (or a subexecutor)
+    // in the value channel.
+    static_assert((bool) execution::Sender<Executor, execution::sender_t::single_t>);
     auto e2 = execution::require(std::move(e), oneway);
     impl_ = new oneway_executor_impl::impl<decltype(e2), SupportableProperties...>(std::move(e2));
   }
@@ -478,6 +489,10 @@ public:
     return std::get<0>(*result);
   }
 
+  // All executors are single senders that forward themselves (or a subexecutor)
+  // through the value channel.
+  static constexpr sender_t::single_t query(sender_t) noexcept { return sender.single; }
+
   template<class Function>
   void execute(Function f) const
   {
@@ -498,6 +513,7 @@ public:
     template <NoneReceiver To>
     void submit(To to)
     {
+      // TODO: This should dispatch to a (type-erased)
       this_.execute(
         [f = std::move(f_), to = std::move(to)]() mutable
         {
@@ -506,19 +522,34 @@ public:
         }
       );
     }
-    auto execute() const
+    auto executor() const
     {
       return this_;
     }
   };
+
   template<class Function>
     requires Invocable<Function&>
-  auto execute_(Function f) const -> Sender<sender_t::none_t>
+  auto make_value_task(Function f) const -> Sender<sender_t::none_t>
   {
     return __oneway_sender<Function>{std::move(f), *this};
   }
 
-  // REVIEW: I guess, right?
+  // TODO: finish implementing type-erased senders and receivers...
+  // template<class Function>
+  //   requires Invocable<Function&>
+  // auto make_value_task(Function f) const -> Sender<sender_t::none_t>
+  // {
+  //   std::unique_ptr<oneway_executor_impl::oneway_func_base> fp(
+  //     new oneway_executor_impl::oneway_func<Function>(std::move(f)));
+  //   return impl_ ? impl_->make_value_task(std::move(fp)) : throw bad_executor();
+  // }
+
+
+
+  // TODO: This should type-erase the receiver and pass it through to
+  // the wrapped executor's submit, but we haven't implemented type-erased
+  // receivers yet.
   template<SingleReceiver<polymorphic_executor_type&> To>
   void submit(To to)
   {

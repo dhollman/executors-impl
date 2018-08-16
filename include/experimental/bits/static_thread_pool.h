@@ -74,6 +74,9 @@ class static_thread_pool
     // Mapping of execution on to threads.
     static constexpr execution::mapping_t query(execution::mapping_t) { return execution::mapping.thread; }
 
+    // This is a single sender.
+    static constexpr execution::sender_t::single_t query(execution::sender_t) { return execution::sender.single; }
+
     // Allocator.
     executor_impl<Interface, Blocking, Continuation, Work, std::allocator<void>>
       require(const execution::allocator_t<void>&) const { return {pool_, std::allocator<void>{}}; };
@@ -104,6 +107,40 @@ class static_thread_pool
       pool_->execute(Blocking{}, Continuation{}, allocator_, std::move(f));
     }
 
+    template <class Function>
+      requires Invocable<Function&>
+    struct __oneway_sender
+    {
+      Function f_;
+      executor_impl this_;
+      static constexpr auto query(execution::sender_t)
+      {
+        return execution::sender.none;
+      }
+      template <execution::NoneReceiver To>
+      void submit(To to)
+      {
+        this_.execute(
+          [f = std::move(f_), to = std::move(to), pool = this_.pool_]() mutable
+          {
+            f();
+            execution::set_done(to);
+          }
+        );
+      }
+      executor_impl executor() const
+      {
+        return this_;
+      }
+    };
+
+    template <class Function>
+      requires Invocable<Function&> && Same<Interface, execution::oneway_t>
+    auto make_value_task(Function f) const
+    {
+      return __oneway_sender<Function>{std::move(f), *this};
+    }
+
     template<class Function, class SharedFactory,
         typename std::enable_if<
           std::is_same<Function, Function>::value && std::is_same<Interface, execution::bulk_oneway_t>::value
@@ -111,6 +148,16 @@ class static_thread_pool
     void execute(Function f, std::size_t n, SharedFactory sf) const
     {
       pool_->bulk_execute(Blocking{}, Continuation{}, allocator_, std::move(f), n, std::move(sf));
+    }
+
+    template <execution::SingleReceiver<executor_impl&> To>
+    void submit(To to)
+    {
+      set_value(to, *this);
+    }
+    executor_impl executor() const
+    {
+      return *this;
     }
   };
 
@@ -122,6 +169,7 @@ public:
       execution::outstanding_work_t::untracked_t,
       std::allocator<void>
     >;
+  static_assert(execution::Sender<executor_type>);
 
   explicit static_thread_pool(std::size_t threads)
   {

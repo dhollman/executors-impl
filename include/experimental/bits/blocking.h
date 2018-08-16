@@ -77,7 +77,7 @@ private:
     };
     template<class Function>
       requires Invocable<Function&>
-    auto execute_(Function f) const -> Sender<sender_t::none_t>
+    auto make_value_task(Function f) const -> Sender<sender_t::none_t>
     {
       return __oneway_sender<Function>{std::move(f), *this, std::move(submit)};
     }

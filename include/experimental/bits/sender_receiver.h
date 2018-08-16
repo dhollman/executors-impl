@@ -30,21 +30,30 @@ concept bool _NonVoidInvocable =
 namespace experimental {
 inline namespace executors_v1 {
 namespace execution {
-
-inline constexpr struct receiver_t
+template <bool Requirable, bool Preferable>
+struct __property_base
 {
-    static inline constexpr bool const is_requirable = false;
-    static inline constexpr bool const is_preferable = false;
-    static inline constexpr struct none_t {
+  static inline constexpr bool const is_requirable = Requirable;
+  static inline constexpr bool const is_preferable = Preferable;
+};
+template <bool Requirable, bool Preferable>
+constexpr bool const __property_base<Requirable, Preferable>::is_requirable;
+template <bool Requirable, bool Preferable>
+constexpr bool const __property_base<Requirable, Preferable>::is_preferable;
+
+inline constexpr struct receiver_t : __property_base<false, false>
+{
+    using polymorphic_query_result_type = size_t;
+    static inline constexpr struct none_t : __property_base<false, false> {
         static inline constexpr size_t const cardinality = 0;
+        constexpr operator size_t () const noexcept { return cardinality; }
     } const none{};
     static inline constexpr struct single_t : none_t {
         static inline constexpr size_t const cardinality = 1;
+        constexpr operator size_t () const noexcept { return cardinality; }
     } const single{};
 } const receiver {};
 
-constexpr bool const receiver_t::is_requirable;
-constexpr bool const receiver_t::is_preferable;
 constexpr receiver_t::none_t const receiver_t::none;
 constexpr receiver_t::single_t const receiver_t::single;
 constexpr size_t const receiver_t::none_t::cardinality;
@@ -155,20 +164,19 @@ namespace __test__
     static_assert((bool) SingleReceiver<S, char const*, int>);
 } // namespace __test__
 
-inline constexpr struct sender_t
+inline constexpr struct sender_t : __property_base<false, false>
 {
-    static inline constexpr bool const is_requirable = false;
-    static inline constexpr bool const is_preferable = false;
-    static inline constexpr struct none_t {
+    using polymorphic_query_result_type = size_t;
+    static inline constexpr struct none_t : __property_base<false, false> {
         static inline constexpr size_t const cardinality = 0;
+        constexpr operator size_t () const noexcept { return cardinality; }
     } const none{};
     static inline constexpr struct single_t : none_t {
         static inline constexpr size_t const cardinality = 1;
+        constexpr operator size_t () const noexcept { return cardinality; }
     } const single{};
 } const sender {};
 
-constexpr bool const sender_t::is_requirable;
-constexpr bool const sender_t::is_preferable;
 constexpr sender_t::none_t const sender_t::none;
 constexpr sender_t::single_t const sender_t::single;
 constexpr size_t const sender_t::none_t::cardinality;
@@ -349,6 +357,77 @@ basic_receiver(OnValue, OnError, OnDone) -> basic_receiver<OnDone, OnError, OnVa
 template<class OnError, class OnDone>
   requires Invocable<OnDone&>
 basic_receiver(OnError, OnDone) -> basic_receiver<OnDone, OnError>;
+
+template <class E = std::exception_ptr>
+struct any_none_receiver
+{
+private:
+    struct interface
+    {
+        virtual ~interface() {}
+        virtual void set_done() = 0;
+        virtual void set_error(E) = 0;
+        virtual unique_ptr<interface> clone() = 0;
+    };
+    template <NoneReceiver<E> To>
+    struct model : interface
+    {
+        To to_;
+        model(To to) : to_(std::move(to)) {}
+        void set_done() override { execution::set_done(to_); }
+        void set_error(E e) override { execution::set_error(to_, std::move(e)); }
+        unique_ptr<interface> clone() override { return make_unique<model>(to_); }
+    };
+    unique_ptr<interface> impl_;
+public:
+    any_none_receiver() = default;
+    template <class To>
+      requires !Same<To, any_none_receiver> && NoneReceiver<To, E>
+    any_none_receiver(To to)
+      : impl_(make_unique<model<To>>(std::move(to)))
+    {}
+    any_none_receiver(any_none_receiver&&) = default;
+    any_none_receiver(any_none_receiver const &that)
+      : impl_(that.impl_ ? that.impl_->clone() : unique_ptr<interface>{})
+    {}
+    static constexpr auto query(receiver_t) noexcept { return receiver.none; }
+    void set_done() { impl_->set_done(); }
+    void set_error(E e) { impl_->set_error(std::move(e)); }
+};
+
+template <class E = std::exception_ptr>
+struct any_none_sender
+{
+private:
+    struct interface
+    {
+        virtual ~interface() {}
+        virtual void submit(any_none_receiver<E> to) = 0;
+        virtual unique_ptr<interface> clone() = 0;
+    };
+    template <SenderTo<any_none_receiver<E>> From>
+    struct model : interface
+    {
+        From from_;
+        model(From from) : from_(std::move(from)) {}
+        void submit(any_none_receiver<E> to) override { execution::submit(from_, std::move(to)); }
+        unique_ptr<interface> clone() override { return make_unique<model>(from_); }
+    };
+    unique_ptr<interface> impl_;
+public:
+    any_none_sender() = default;
+    template <class From>
+      requires !Same<From, any_none_sender> && SenderTo<From, any_none_receiver<E>>
+    any_none_sender(From from)
+      : impl_(make_unique<model<From>>(std::move(from)))
+    {}
+    any_none_sender(any_none_sender&&) = default;
+    any_none_sender(any_none_sender const &that)
+      : impl_(that.impl_ ? that.impl_->clone() : unique_ptr<interface>{})
+    {}
+    static constexpr auto query(sender_t) noexcept { return sender.none; }
+    void submit(any_none_receiver<E> to) { impl_->submit(std::move(to)); }
+};
 
 } // namespace execution
 } // inline namespace executors_v1

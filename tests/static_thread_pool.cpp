@@ -49,6 +49,7 @@ void static_thread_pool_oneway_executor_compile_test(Executor ex1)
   const Executor& cex1 = ex1;
 
   cex1.execute([]{});
+  cex1.make_value_task([]{}).submit(execution::basic_receiver{});
 
   static_thread_pool_oneway_executor_compile_test(execution::require(cex1, execution::blocking.never));
   static_thread_pool_oneway_executor_compile_test(execution::require(cex1, execution::blocking.possibly));

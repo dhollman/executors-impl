@@ -349,6 +349,9 @@ public:
         typename std::enable_if<!std::is_same<Executor, polymorphic_executor_type>::value, Executor>::type,
         SupportableProperties...>>::type* = 0)
   {
+    // All valid Executors are single senders that send themselves (or a subexecutor)
+    // in the value channel.
+    static_assert((bool) execution::Sender<Executor, execution::sender_t::single_t>);
     auto e2 = execution::require(std::move(e), bulk_oneway);
     impl_ = new bulk_oneway_executor_impl::impl<decltype(e2), SupportableProperties...>(std::move(e2));
   }
@@ -479,6 +482,10 @@ public:
     return std::get<0>(*result);
   }
 
+  // All executors are single senders that forward themselves (or a subexecutor)
+  // through the value channel.
+  static constexpr sender_t::single_t query(sender_t) noexcept { return sender.single; }
+
   template<class Function, class SharedFactory>
   void execute(Function f, std::size_t n, SharedFactory sf) const
   {
@@ -495,6 +502,54 @@ public:
     std::unique_ptr<bulk_oneway_executor_impl::bulk_func_base> fp(new bulk_oneway_executor_impl::bulk_func<decltype(f_wrap)>(std::move(f_wrap)));
     std::shared_ptr<bulk_oneway_executor_impl::shared_factory_base> sfp(new bulk_oneway_executor_impl::shared_factory<decltype(sf_wrap)>(std::move(sf_wrap)));
     impl_ ? impl_->execute(std::move(fp), n, std::move(sfp)) : throw bad_executor();
+  }
+
+  // template<class Function, class SharedFactory>
+  //   requires Invocable<SharedFactory&> &&
+  //            Invocable<Function&, size_t, invoke_result_t<SharedFactory&>>
+  // struct __bulk_oneway_sender
+  // {
+  //   Function f_;
+  //   size_t n_;
+  //   SharedFactory sf_;
+  //   polymorphic_executor_type this_;
+  //   static constexpr auto query(sender_t)
+  //   {
+  //     return sender.none;
+  //   }
+  //   template <NoneReceiver To>
+  //   void submit(To to)
+  //   {
+  //     this_.execute(
+  //       [f = std::move(f_), to = std::move(to)]() mutable
+  //       {
+  //         f();
+  //         set_done(to);
+  //       }
+  //     );
+  //   }
+  //   polymorphic_executor_type executor() const
+  //   {
+  //     return this_;
+  //   }
+  // };
+
+  // template<class Function, class SharedFactory>
+  //   requires Invocable<SharedFactory&> &&
+  //            Invocable<Function&, size_t, invoke_result_t<SharedFactory&>>
+  // auto make_value_task(Function f, std::size_t n, SharedFactory sf) const //-> Sender<sender_t::none_t>
+  // {
+  //   static_assert((bool)Sender<polymorphic_executor_type>);
+  //   return __bulk_oneway_sender<Function, SharedFactory>{std::move(f), n, std::move(sf), *this};
+  // }
+
+  // TODO: This should type-erase the receiver and pass it through to
+  // the wrapped executor's submit, but we haven't implemented type-erased
+  // receivers yet.
+  template<SingleReceiver<polymorphic_executor_type&> To>
+  void submit(To to)
+  {
+    set_value(to, *this);
   }
 
   // polymorphic executor capacity:
