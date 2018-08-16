@@ -3,6 +3,7 @@
 
 #include <experimental/bits/enumeration.h>
 #include <experimental/bits/enumerator_adapter.h>
+#include <experimental/bits/sender_receiver.h>
 
 namespace std {
 namespace experimental {
@@ -38,11 +39,80 @@ private:
       return this->executor_.execute(std::move(f));
     }
 
+    template <class Function>
+      requires Invocable<Function&>
+    struct __oneway_sender
+    {
+      Function f_;
+      adapter this_;
+      static constexpr auto query(sender_t)
+      {
+        return sender.none;
+      }
+      template <NoneReceiver To>
+      void submit(To to)
+      {
+        this_.executor.submit(
+          basic_receiver{
+            [f = std::move(f_), to = std::move(to)](Executor) mutable
+            {
+              f();
+              set_done(to);
+            }
+          }
+        );
+      }
+      auto executor() const
+      {
+        return this_;
+      }
+    };
+    template<class Function>
+      requires Invocable<Function&>
+    auto execute_(Function f) const -> Sender<sender_t::none_t>
+    {
+      return __oneway_sender<Function>{std::move(f), *this};
+    }
+
     template<class Function>
     auto twoway_execute(Function f) const
       -> decltype(inner_declval<Function>().twoway_execute(std::move(f)))
     {
       return this->executor_.twoway_execute(std::move(f));
+    }
+
+    template <class Function>
+      requires _NonVoidInvocable<Function&>
+    struct __twoway_sender
+    {
+      Function f_;
+      adapter this_;
+      static constexpr auto query(sender_t)
+      {
+        return sender.single;
+      }
+      template <SingleReceiver<invoke_result_t<Function&>> To>
+      void submit(To to)
+      {
+        this_.executor.submit(
+          basic_receiver{
+            [f = std::move(f_), to = std::move(to)](Executor) mutable
+            {
+              set_value(to, f());
+            }
+          }
+        );
+      }
+      auto executor() const
+      {
+        return this_;
+      }
+    };
+    template<class Function>
+      requires _NonVoidInvocable<Function&>
+    auto twoway_execute_(Function f) const -> Sender<sender_t::single_t>
+    {
+      return __twoway_sender<Function>{std::move(f), *this};
     }
 
     template<class Function, class SharedFactory>
@@ -57,6 +127,12 @@ private:
       -> decltype(inner_declval<Function>().bulk_twoway_execute(std::move(f), n, std::move(rf), std::move(sf)))
     {
       return this->executor_.bulk_twoway_execute(std::move(f), n, std::move(rf), std::move(sf));
+    }
+
+    template<SingleReceiver<adapter&> To>
+    void submit(To to)
+    {
+      set_value((To&&) to, *this);
     }
   };
 

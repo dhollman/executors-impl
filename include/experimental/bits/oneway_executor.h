@@ -5,6 +5,7 @@
 #include <cassert>
 #include <experimental/bits/bad_executor.h>
 #include <experimental/bits/is_interface_property.h>
+#include <experimental/bits/sender_receiver.h>
 #include <memory>
 #include <utility>
 
@@ -482,6 +483,46 @@ public:
   {
     std::unique_ptr<oneway_executor_impl::oneway_func_base> fp(new oneway_executor_impl::oneway_func<Function>(std::move(f)));
     impl_ ? impl_->execute(std::move(fp)) : throw bad_executor();
+  }
+
+  template <class Function>
+    requires Invocable<Function&>
+  struct __oneway_sender
+  {
+    Function f_;
+    polymorphic_executor_type this_;
+    static constexpr auto query(sender_t)
+    {
+      return sender.none;
+    }
+    template <NoneReceiver To>
+    void submit(To to)
+    {
+      this_.execute(
+        [f = std::move(f_), to = std::move(to)]() mutable
+        {
+          f();
+          set_done(to);
+        }
+      );
+    }
+    auto execute() const
+    {
+      return this_;
+    }
+  };
+  template<class Function>
+    requires Invocable<Function&>
+  auto execute_(Function f) const -> Sender<sender_t::none_t>
+  {
+    return __oneway_sender<Function>{std::move(f), *this};
+  }
+
+  // REVIEW: I guess, right?
+  template<SingleReceiver<polymorphic_executor_type&> To>
+  void submit(To to)
+  {
+    set_value(to, *this);
   }
 
   // polymorphic executor capacity:

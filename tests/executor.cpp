@@ -48,6 +48,9 @@ void oneway_executor_compile_test()
   execution::executor<execution::oneway_t> ex6(ex5);
   execution::executor<execution::oneway_t, execution::bulk_oneway_t> ex7(ex5);
 
+  ex6.submit(execution::basic_receiver{});
+  ex6.execute_([]{std::printf("hello world\n");}).submit(execution::basic_receiver{});
+
   static_assert(noexcept(ex2 = cex1), "copy assignment must not throw");
   static_assert(noexcept(ex3 = std::move(ex1)), "move assignment must not throw");
   static_assert(noexcept(ex3 = nullptr), "nullptr assignment must not throw");
@@ -84,7 +87,7 @@ void oneway_executor_compile_test()
   ex1 = execution::prefer(cex1, execution::bulk_guarantee.unsequenced);
   ex1 = execution::prefer(cex1, execution::mapping.new_thread);
 
-  cex1.execute([]{});
+  cex1.execute_([]{}).submit(execution::basic_receiver{});
 
   //cex1.bulk_execute([](std::size_t, int&){}, 1, []{ return 42; });
 
