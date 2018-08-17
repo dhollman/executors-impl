@@ -139,7 +139,7 @@ struct impl_base
   virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
   virtual void execute(std::unique_ptr<oneway_func_base> f) = 0;
-  //virtual any_none_sender<> make_value_task(std::unique_ptr<oneway_func_base> f) = 0;
+  virtual any_none_sender<> make_value_task(function<void()> f) = 0;
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
   virtual const void* target() const = 0;
@@ -176,12 +176,10 @@ struct impl : impl_base
     executor_.execute([f = std::move(f)]() mutable { f.release()->call(); });
   }
 
-  // virtual any_none_sender<> make_value_task(std::unique_ptr<oneway_func_base> f)
-  // {
-  //   return executor_.make_value_task(
-  //       [f = std::move(f)]() mutable { f.release()->call(); }
-  //     );
-  // }
+  virtual any_none_sender<> make_value_task(function<void()> f)
+  {
+    return executor_.make_value_task(std::move(f));
+  }
 
   virtual const type_info& target_type() const
   {
@@ -500,52 +498,12 @@ public:
     impl_ ? impl_->execute(std::move(fp)) : throw bad_executor();
   }
 
-  template <class Function>
-    requires Invocable<Function&>
-  struct __oneway_sender
-  {
-    Function f_;
-    polymorphic_executor_type this_;
-    static constexpr auto query(sender_t)
-    {
-      return sender.none;
-    }
-    template <NoneReceiver To>
-    void submit(To to)
-    {
-      // TODO: This should dispatch to a (type-erased)
-      this_.execute(
-        [f = std::move(f_), to = std::move(to)]() mutable
-        {
-          f();
-          set_done(to);
-        }
-      );
-    }
-    auto executor() const
-    {
-      return this_;
-    }
-  };
-
   template<class Function>
     requires Invocable<Function&>
-  auto make_value_task(Function f) const -> Sender<sender_t::none_t>
+  auto make_value_task(Function f) const -> Sender
   {
-    return __oneway_sender<Function>{std::move(f), *this};
+    return impl_ ? impl_->make_value_task(std::move(f)) : throw bad_executor();
   }
-
-  // TODO: finish implementing type-erased senders and receivers...
-  // template<class Function>
-  //   requires Invocable<Function&>
-  // auto make_value_task(Function f) const -> Sender<sender_t::none_t>
-  // {
-  //   std::unique_ptr<oneway_executor_impl::oneway_func_base> fp(
-  //     new oneway_executor_impl::oneway_func<Function>(std::move(f)));
-  //   return impl_ ? impl_->make_value_task(std::move(fp)) : throw bad_executor();
-  // }
-
-
 
   // TODO: This should type-erase the receiver and pass it through to
   // the wrapped executor's submit, but we haven't implemented type-erased

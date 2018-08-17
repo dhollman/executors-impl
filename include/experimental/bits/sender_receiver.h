@@ -13,6 +13,9 @@ template <class A, class B>
 concept bool Same = __is_same_as(A, B) && __is_same_as(B, A);
 
 template <class A, class B>
+concept bool _NotSame_ = !Same<A, B>;
+
+template <class A, class B>
 concept bool DerivedFrom = __is_base_of(B, A);
 
 template<class F, class... Args>
@@ -231,14 +234,14 @@ using sender_category_t =
 
 inline constexpr struct __submit
 {
-    template <Sender From, Receiver To>
+    template <_Sender From, Receiver To>
       requires requires (From& from, To to) { from.submit((To&&) to); } &&
         sender_category_t<From>::cardinality <= receiver_category_t<To>::cardinality
     void operator()(From& from, To to) const noexcept(noexcept(from.submit((To&&) to)))
     {
         from.submit((To&&) to);
     }
-    template <Sender From, Receiver To>
+    template <_Sender From, Receiver To>
       requires requires (From& from, To to) { submit(from, (To&&) to); } &&
         sender_category_t<From>::cardinality <= receiver_category_t<To>::cardinality
     void operator()(From& from, To to) const volatile noexcept(noexcept(submit(from, (To&&) to)))
@@ -358,16 +361,47 @@ template<class OnError, class OnDone>
   requires Invocable<OnDone&>
 basic_receiver(OnError, OnDone) -> basic_receiver<OnDone, OnError>;
 
+template <class Derived>
+struct __cloneable
+{
+    virtual ~__cloneable() {}
+    virtual unique_ptr<Derived> clone() const = 0;
+};
+
+template <class Interface>
+  requires is_abstract_v<Interface> && requires (Interface const* p) {
+      { p->clone() } -> unique_ptr<Interface>;
+  }
+class __pimpl_ptr
+{
+    unique_ptr<Interface> ptr_;
+public:
+    __pimpl_ptr() = default;
+    __pimpl_ptr(unique_ptr<Interface> ptr) : ptr_(std::move(ptr)) {}
+    __pimpl_ptr(__pimpl_ptr&&) = default;
+    __pimpl_ptr(__pimpl_ptr const& that)
+      : ptr_(that.ptr_ ? that.ptr_->clone() : unique_ptr<Interface>{}) {}
+    __pimpl_ptr& operator=(__pimpl_ptr&&) = default;
+    __pimpl_ptr& operator=(__pimpl_ptr const& that)
+    {
+        if (&that != this)
+            ptr_ = (that.ptr_ ? that.ptr_->clone() : unique_ptr<Interface>{});
+        return *this;
+    }
+    Interface* operator->() noexcept { return ptr_.get(); }
+    Interface const* operator->() const noexcept { return ptr_.get(); }
+    Interface& operator*() noexcept { return *ptr_; }
+    Interface const& operator*() const noexcept { return *ptr_; }
+};
+
 template <class E = std::exception_ptr>
 struct any_none_receiver
 {
 private:
-    struct interface
+    struct interface : __cloneable<interface>
     {
-        virtual ~interface() {}
         virtual void set_done() = 0;
         virtual void set_error(E) = 0;
-        virtual unique_ptr<interface> clone() = 0;
     };
     template <NoneReceiver<E> To>
     struct model : interface
@@ -376,19 +410,16 @@ private:
         model(To to) : to_(std::move(to)) {}
         void set_done() override { execution::set_done(to_); }
         void set_error(E e) override { execution::set_error(to_, std::move(e)); }
-        unique_ptr<interface> clone() override { return make_unique<model>(to_); }
+        unique_ptr<interface> clone() const override { return make_unique<model>(to_); }
     };
-    unique_ptr<interface> impl_;
+    __pimpl_ptr<interface> impl_;
+    template <_NotSame_<any_none_receiver> A> using not_self_t = A;
 public:
     any_none_receiver() = default;
     template <class To>
-      requires !Same<To, any_none_receiver> && NoneReceiver<To, E>
+      requires NoneReceiver<not_self_t<To>, E>
     any_none_receiver(To to)
       : impl_(make_unique<model<To>>(std::move(to)))
-    {}
-    any_none_receiver(any_none_receiver&&) = default;
-    any_none_receiver(any_none_receiver const &that)
-      : impl_(that.impl_ ? that.impl_->clone() : unique_ptr<interface>{})
     {}
     static constexpr auto query(receiver_t) noexcept { return receiver.none; }
     void set_done() { impl_->set_done(); }
@@ -399,11 +430,9 @@ template <class E = std::exception_ptr>
 struct any_none_sender
 {
 private:
-    struct interface
+    struct interface : __cloneable<interface>
     {
-        virtual ~interface() {}
         virtual void submit(any_none_receiver<E> to) = 0;
-        virtual unique_ptr<interface> clone() = 0;
     };
     template <SenderTo<any_none_receiver<E>> From>
     struct model : interface
@@ -411,19 +440,16 @@ private:
         From from_;
         model(From from) : from_(std::move(from)) {}
         void submit(any_none_receiver<E> to) override { execution::submit(from_, std::move(to)); }
-        unique_ptr<interface> clone() override { return make_unique<model>(from_); }
+        unique_ptr<interface> clone() const override { return make_unique<model>(from_); }
     };
-    unique_ptr<interface> impl_;
+    __pimpl_ptr<interface> impl_;
+    template <_NotSame_<any_none_sender> A> using not_self_t = A;
 public:
     any_none_sender() = default;
     template <class From>
-      requires !Same<From, any_none_sender> && SenderTo<From, any_none_receiver<E>>
+      requires SenderTo<not_self_t<From>, any_none_receiver<E>>
     any_none_sender(From from)
       : impl_(make_unique<model<From>>(std::move(from)))
-    {}
-    any_none_sender(any_none_sender&&) = default;
-    any_none_sender(any_none_sender const &that)
-      : impl_(that.impl_ ? that.impl_->clone() : unique_ptr<interface>{})
     {}
     static constexpr auto query(sender_t) noexcept { return sender.none; }
     void submit(any_none_receiver<E> to) { impl_->submit(std::move(to)); }

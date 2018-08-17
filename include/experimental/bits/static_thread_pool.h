@@ -107,6 +107,15 @@ class static_thread_pool
       pool_->execute(Blocking{}, Continuation{}, allocator_, std::move(f));
     }
 
+    template<class Function, class SharedFactory,
+        typename std::enable_if<
+          std::is_same<Function, Function>::value && std::is_same<Interface, execution::bulk_oneway_t>::value
+        >::type* = nullptr>
+    void execute(Function f, std::size_t n, SharedFactory sf) const
+    {
+      pool_->bulk_execute(Blocking{}, Continuation{}, allocator_, std::move(f), n, std::move(sf));
+    }
+
     template <class Function>
       requires Invocable<Function&>
     struct __oneway_sender
@@ -121,7 +130,7 @@ class static_thread_pool
       void submit(To to)
       {
         this_.execute(
-          [f = std::move(f_), to = std::move(to), pool = this_.pool_]() mutable
+          [f = std::move(f_), to = std::move(to)]() mutable
           {
             f();
             execution::set_done(to);
@@ -136,18 +145,52 @@ class static_thread_pool
 
     template <class Function>
       requires Invocable<Function&> && Same<Interface, execution::oneway_t>
-    auto make_value_task(Function f) const
+    auto make_value_task(Function f) const -> execution::Sender
     {
       return __oneway_sender<Function>{std::move(f), *this};
     }
 
-    template<class Function, class SharedFactory,
-        typename std::enable_if<
-          std::is_same<Function, Function>::value && std::is_same<Interface, execution::bulk_oneway_t>::value
-        >::type* = nullptr>
-    void execute(Function f, std::size_t n, SharedFactory sf) const
+    template <class Function, class SharedFactory>
+      requires Invocable<SharedFactory&> &&
+               Invocable<Function&, size_t, invoke_result_t<SharedFactory&>&>
+    struct __bulk_oneway_sender
     {
-      pool_->bulk_execute(Blocking{}, Continuation{}, allocator_, std::move(f), n, std::move(sf));
+      Function f_;
+      size_t n_;
+      SharedFactory sf_;
+      executor_impl this_;
+      static constexpr auto query(execution::sender_t)
+      {
+        return execution::sender.none;
+      }
+      template <execution::NoneReceiver To>
+      void submit(To to)
+      {
+        this_.execute(
+          [f = std::move(f_), n = n_, to = std::move(to)](
+              size_t m, invoke_result_t<SharedFactory&>& s) mutable
+          {
+            f(m, s);
+            if (m == n) // done? This is a hack. We need a bulk reduction step.
+              execution::set_done(to);
+          },
+          n_,
+          std::move(sf_)
+        );
+      }
+      executor_impl executor() const
+      {
+        return this_;
+      }
+    };
+
+    template <class Function, class SharedFactory>
+      requires Invocable<SharedFactory&> &&
+               Invocable<Function&, size_t, invoke_result_t<SharedFactory&>&> &&
+               Same<Interface, execution::bulk_oneway_t>
+    auto make_bulk_value_task(Function f, std::size_t n, SharedFactory sf) const -> execution::Sender
+    {
+      return __bulk_oneway_sender<Function, SharedFactory>{std::move(f), n, std::move(sf), *this};
     }
 
     template <execution::SingleReceiver<executor_impl&> To>

@@ -138,6 +138,7 @@ struct impl_base
   virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
   virtual void execute(std::unique_ptr<bulk_func_base> f, std::size_t n, std::shared_ptr<shared_factory_base> sf) = 0;
+  virtual any_none_sender<> make_bulk_value_task(function<void(size_t, shared_ptr<void>&)>, size_t, function<shared_ptr<void>()>) = 0;
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
   virtual const void* target() const = 0;
@@ -179,6 +180,14 @@ struct impl : impl_base
   virtual const type_info& target_type() const
   {
     return typeid(executor_);
+  }
+
+  virtual any_none_sender<> make_bulk_value_task(
+    function<void(size_t, shared_ptr<void>&)> f,
+    size_t n,
+    function<shared_ptr<void>()> sf)
+  {
+    return executor_.make_bulk_value_task(std::move(f), n, std::move(sf));
   }
 
   virtual void* target()
@@ -504,44 +513,21 @@ public:
     impl_ ? impl_->execute(std::move(fp), n, std::move(sfp)) : throw bad_executor();
   }
 
-  // template<class Function, class SharedFactory>
-  //   requires Invocable<SharedFactory&> &&
-  //            Invocable<Function&, size_t, invoke_result_t<SharedFactory&>>
-  // struct __bulk_oneway_sender
-  // {
-  //   Function f_;
-  //   size_t n_;
-  //   SharedFactory sf_;
-  //   polymorphic_executor_type this_;
-  //   static constexpr auto query(sender_t)
-  //   {
-  //     return sender.none;
-  //   }
-  //   template <NoneReceiver To>
-  //   void submit(To to)
-  //   {
-  //     this_.execute(
-  //       [f = std::move(f_), to = std::move(to)]() mutable
-  //       {
-  //         f();
-  //         set_done(to);
-  //       }
-  //     );
-  //   }
-  //   polymorphic_executor_type executor() const
-  //   {
-  //     return this_;
-  //   }
-  // };
-
-  // template<class Function, class SharedFactory>
-  //   requires Invocable<SharedFactory&> &&
-  //            Invocable<Function&, size_t, invoke_result_t<SharedFactory&>>
-  // auto make_value_task(Function f, std::size_t n, SharedFactory sf) const //-> Sender<sender_t::none_t>
-  // {
-  //   static_assert((bool)Sender<polymorphic_executor_type>);
-  //   return __bulk_oneway_sender<Function, SharedFactory>{std::move(f), n, std::move(sf), *this};
-  // }
+  template<class Function, class SharedFactory>
+    requires Invocable<SharedFactory&> &&
+             Invocable<Function&, size_t, invoke_result_t<SharedFactory&>&>
+  auto make_bulk_value_task(Function f, std::size_t n, SharedFactory sf) const -> Sender
+  {
+    return impl_ ? impl_->make_bulk_value_task(
+      [f = std::move(f)](size_t m, shared_ptr<void>& s) mutable {
+        f(m, *static_cast<invoke_result_t<SharedFactory&>*>(s.get()));
+      },
+      n,
+      [sf = std::move(sf)]() mutable -> shared_ptr<void> {
+        return make_shared<invoke_result_t<SharedFactory&>>(sf());
+      }
+    ) : throw bad_executor();
+  }
 
   // TODO: This should type-erase the receiver and pass it through to
   // the wrapped executor's submit, but we haven't implemented type-erased

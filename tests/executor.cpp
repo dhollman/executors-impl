@@ -186,7 +186,8 @@ void bulk_oneway_executor_compile_test()
   ex1 = execution::prefer(cex1, execution::bulk_guarantee.unsequenced);
   ex1 = execution::prefer(cex1, execution::mapping.new_thread);
 
-  cex1.execute([](std::size_t, int&){}, 1, []{ return 42; });
+  cex1.make_bulk_value_task([](std::size_t, int&){}, 1, []{ return 42; })
+    .submit(execution::basic_receiver{});
 
   bool b1 = static_cast<bool>(ex1);
   (void)b1;
