@@ -39,10 +39,11 @@ private:
       return this->executor_.execute(std::move(f));
     }
 
-    template <class Function>
+    template <Sender From, class Function>
       requires Invocable<Function&>
     struct __oneway_sender
     {
+      From from_;
       Function f_;
       adapter this_;
       static constexpr auto query(sender_t)
@@ -52,14 +53,39 @@ private:
       template <NoneReceiver To>
       void submit(To to)
       {
-        this_.executor.submit(
-          basic_receiver{
-            [f = std::move(f_), to = std::move(to)](Executor) mutable
-            {
-              f();
-              set_done(to);
-            }
+        struct __receiver
+        {
+          Function f_;
+          To to_;
+          Executor exec_;
+          static constexpr auto query(execution::receiver_t)
+          {
+            return execution::receiver.none;
           }
+          void set_error(std::exception_ptr e)
+          {
+            execution::set_error(to_, e);
+          }
+          void set_done()
+          {
+            execution::set_done(to_);
+          }
+          void set_value()
+          {
+            exec_.submit(
+              single_receiver{
+                [f = std::move(f_), to = std::move(to_)](auto) mutable
+                {
+                  f();
+                  execution::set_value(to);
+                }
+              }
+            );
+          }
+        };
+        execution::submit(
+          from_,
+          __receiver{std::move(f_), std::move(to), this_.executor}
         );
       }
       auto executor() const
@@ -67,11 +93,11 @@ private:
         return this_;
       }
     };
-    template<class Function>
+    template<Sender From, class Function>
       requires Invocable<Function&>
-    auto make_value_task(Function f) const -> Sender<sender_t::none_t>
+    auto make_value_task(From from, Function f) const -> Sender
     {
-      return __oneway_sender<Function>{std::move(f), *this};
+      return __oneway_sender<From, Function>{std::move(from), std::move(f), *this};
     }
 
     template<class Function>
@@ -81,39 +107,39 @@ private:
       return this->executor_.twoway_execute(std::move(f));
     }
 
-    template <class Function>
-      requires _NonVoidInvocable<Function&>
-    struct __twoway_sender
-    {
-      Function f_;
-      adapter this_;
-      static constexpr auto query(sender_t)
-      {
-        return sender.single;
-      }
-      template <SingleReceiver<invoke_result_t<Function&>> To>
-      void submit(To to)
-      {
-        this_.executor.submit(
-          basic_receiver{
-            [f = std::move(f_), to = std::move(to)](Executor) mutable
-            {
-              set_value(to, f());
-            }
-          }
-        );
-      }
-      auto executor() const
-      {
-        return this_;
-      }
-    };
-    template<class Function>
-      requires _NonVoidInvocable<Function&>
-    auto twoway_execute_(Function f) const -> Sender<sender_t::single_t>
-    {
-      return __twoway_sender<Function>{std::move(f), *this};
-    }
+    // template <class Function>
+    //   requires _NonVoidInvocable<Function&>
+    // struct __twoway_sender
+    // {
+    //   Function f_;
+    //   adapter this_;
+    //   static constexpr auto query(sender_t)
+    //   {
+    //     return sender.single;
+    //   }
+    //   template <SingleReceiver<invoke_result_t<Function&>> To>
+    //   void submit(To to)
+    //   {
+    //     this_.executor.submit(
+    //       single_receiver{
+    //         [f = std::move(f_), to = std::move(to)](Executor) mutable
+    //         {
+    //           set_value(to, f());
+    //         }
+    //       }
+    //     );
+    //   }
+    //   auto executor() const
+    //   {
+    //     return this_;
+    //   }
+    // };
+    // template<class Function>
+    //   requires _NonVoidInvocable<Function&>
+    // auto twoway_execute_(Function f) const -> Sender<sender_t::single_t>
+    // {
+    //   return __twoway_sender<Function>{std::move(f), *this};
+    // }
 
     template<class Function, class SharedFactory>
     auto bulk_execute(Function f, std::size_t n, SharedFactory sf) const

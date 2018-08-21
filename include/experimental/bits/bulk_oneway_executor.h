@@ -138,7 +138,7 @@ struct impl_base
   virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
   virtual void execute(std::unique_ptr<bulk_func_base> f, std::size_t n, std::shared_ptr<shared_factory_base> sf) = 0;
-  virtual any_none_sender<> make_bulk_value_task(function<void(size_t, shared_ptr<void>&)>, size_t, function<shared_ptr<void>()>) = 0;
+  virtual any_none_sender<> make_bulk_value_task(any_none_sender<>, function<void(size_t, shared_ptr<void>&)>, size_t, function<shared_ptr<void>()>) = 0;
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
   virtual const void* target() const = 0;
@@ -183,11 +183,12 @@ struct impl : impl_base
   }
 
   virtual any_none_sender<> make_bulk_value_task(
+    any_none_sender<> from, 
     function<void(size_t, shared_ptr<void>&)> f,
     size_t n,
     function<shared_ptr<void>()> sf)
   {
-    return executor_.make_bulk_value_task(std::move(f), n, std::move(sf));
+    return executor_.make_bulk_value_task(std::move(from), std::move(f), n, std::move(sf));
   }
 
   virtual void* target()
@@ -513,12 +514,13 @@ public:
     impl_ ? impl_->execute(std::move(fp), n, std::move(sfp)) : throw bad_executor();
   }
 
-  template<class Function, class SharedFactory>
+  template<Sender From, class Function, class SharedFactory>
     requires Invocable<SharedFactory&> &&
              Invocable<Function&, size_t, invoke_result_t<SharedFactory&>&>
-  auto make_bulk_value_task(Function f, std::size_t n, SharedFactory sf) const -> Sender
+  auto make_bulk_value_task(From from, Function f, std::size_t n, SharedFactory sf) const -> Sender
   {
     return impl_ ? impl_->make_bulk_value_task(
+      std::move(from),
       [f = std::move(f)](size_t m, shared_ptr<void>& s) mutable {
         f(m, *static_cast<invoke_result_t<SharedFactory&>*>(s.get()));
       },

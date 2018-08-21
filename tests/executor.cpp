@@ -48,8 +48,9 @@ void oneway_executor_compile_test()
   execution::executor<execution::oneway_t> ex6(ex5);
   execution::executor<execution::oneway_t, execution::bulk_oneway_t> ex7(ex5);
 
-  ex6.submit(execution::basic_receiver{});
-  ex6.make_value_task([]{std::printf("hello world\n");}).submit(execution::basic_receiver{});
+  ex6.submit(execution::single_receiver{});
+  ex6.make_value_task(execution::none_sender{}, []{std::printf("hello world\n");})
+    .submit(execution::none_receiver{});
 
   static_assert(noexcept(ex2 = cex1), "copy assignment must not throw");
   static_assert(noexcept(ex3 = std::move(ex1)), "move assignment must not throw");
@@ -87,7 +88,7 @@ void oneway_executor_compile_test()
   ex1 = execution::prefer(cex1, execution::bulk_guarantee.unsequenced);
   ex1 = execution::prefer(cex1, execution::mapping.new_thread);
 
-  cex1.make_value_task([]{}).submit(execution::basic_receiver{});
+  cex1.make_value_task(execution::none_sender{}, []{}).submit(execution::none_receiver{});
 
   //cex1.bulk_execute([](std::size_t, int&){}, 1, []{ return 42; });
 
@@ -186,8 +187,8 @@ void bulk_oneway_executor_compile_test()
   ex1 = execution::prefer(cex1, execution::bulk_guarantee.unsequenced);
   ex1 = execution::prefer(cex1, execution::mapping.new_thread);
 
-  cex1.make_bulk_value_task([](std::size_t, int&){}, 1, []{ return 42; })
-    .submit(execution::basic_receiver{});
+  cex1.make_bulk_value_task(execution::none_sender{}, [](std::size_t, int&){}, 1, []{ return 42; })
+    .submit(execution::none_receiver{});
 
   bool b1 = static_cast<bool>(ex1);
   (void)b1;

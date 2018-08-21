@@ -43,10 +43,11 @@ private:
       future.wait();
     }
 
-    template <class Function>
+    template <Sender From, class Function>
       requires Invocable<Function&>
     struct __oneway_sender
     {
+      From from_;
       Function f_;
       adapter this_;
       static constexpr auto query(sender_t)
@@ -56,30 +57,55 @@ private:
       template <NoneReceiver To>
       void submit(To to)
       {
-        std::promise<void> p;
-        auto f = p.get_future();
-        this_.executor_.submit(
-          basic_receiver{
-            [p = std::move(p), f = std::move(f_)](Executor) mutable
-            {
-              f();
-              p.set_value();
-            }
+        struct __receiver
+        {
+          std::promise<void> p_;
+          Function f_;
+          To to_;
+          Executor exec_;
+          static constexpr auto query(execution::receiver_t)
+          {
+            return execution::receiver.none;
           }
+          void set_error(std::exception_ptr e)
+          {
+            execution::set_error(to_, e);
+          }
+          void set_done()
+          {
+            execution::set_done(to_);
+          }
+          void set_value()
+          {
+            exec_.submit(
+              single_receiver{
+                [p = std::move(p_), f = std::move(f_)](Executor) mutable
+                {
+                  f();
+                  p.set_value();
+                }
+              }
+            );
+          }
+        };
+        std::promise<void> p;
+        auto fut = p.get_future();
+        from_.submit(
+          __receiver{std::move(p), std::move(f_), std::move(to), this_.executor_}
         );
-        f.wait();
-        set_done(to);
+        fut.wait();
+        set_value(to);
       }
       auto executor() const
       {
         return this_;
       }
     };
-    template<class Function>
+    template<Sender From, class Function>
       requires Invocable<Function&>
-    auto make_value_task(Function f) const -> Sender<sender_t::none_t>
+    auto make_value_task(From from, Function f) const -> Sender
     {
-      return __oneway_sender<Function>{std::move(f), *this, std::move(submit)};
+      return __oneway_sender<From, Function>{std::move(from), std::move(f), *this};
     }
 
     template<class Function>
@@ -91,42 +117,42 @@ private:
       return future;
     }
 
-    template <class Function>
-      requires _NonVoidInvocable<Function&>
-    struct __twoway_sender
-    {
-      Function f_;
-      adapter this_;
-      static constexpr auto query(sender_t)
-      {
-        return sender.single;
-      }
-      template <SingleReceiver<invoke_result_t<Function&>> To>
-      void submit(To to)
-      {
-        promise<invoke_result_t<Function&>> p;
-        auto f = p.get_future();
-        this_.executor_.submit(
-          basic_receiver{
-            [p = std::move(p), f = std::move(f_)](Executor) mutable
-            {
-              p.set_value(f());
-            }
-          }
-        );
-        set_value(to, f.get());
-      }
-      auto executor() const
-      {
-        return this_;
-      }
-    };
-    template<class Function>
-      requires _NonVoidInvocable<Function&>
-    auto twoway_execute_(Function f) const -> Sender<sender_t::single_t>
-    {
-      return __twoway_sender<Function>{std::move(f), *this, std::move(submit)};
-    }
+    // template <class Function>
+    //   requires _NonVoidInvocable<Function&>
+    // struct __twoway_sender
+    // {
+    //   Function f_;
+    //   adapter this_;
+    //   static constexpr auto query(sender_t)
+    //   {
+    //     return sender.single;
+    //   }
+    //   template <SingleReceiver<invoke_result_t<Function&>> To>
+    //   void submit(To to)
+    //   {
+    //     promise<invoke_result_t<Function&>> p;
+    //     auto f = p.get_future();
+    //     this_.executor_.submit(
+    //       single_receiver{
+    //         [p = std::move(p), f = std::move(f_)](Executor) mutable
+    //         {
+    //           p.set_value(f());
+    //         }
+    //       }
+    //     );
+    //     set_value(to, f.get());
+    //   }
+    //   auto executor() const
+    //   {
+    //     return this_;
+    //   }
+    // };
+    // template<class Function>
+    //   requires _NonVoidInvocable<Function&>
+    // auto twoway_execute_(Function f) const -> Sender<sender_t::single_t>
+    // {
+    //   return __twoway_sender<Function>{std::move(f), *this, std::move(submit)};
+    // }
 
     template<class Function, class SharedFactory>
     auto bulk_execute(Function f, std::size_t n, SharedFactory sf) const

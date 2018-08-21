@@ -139,7 +139,7 @@ struct impl_base
   virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
   virtual void execute(std::unique_ptr<oneway_func_base> f) = 0;
-  virtual any_none_sender<> make_value_task(function<void()> f) = 0;
+  virtual any_none_sender<> make_value_task(any_none_sender<>, function<void()> f) = 0;
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
   virtual const void* target() const = 0;
@@ -176,9 +176,9 @@ struct impl : impl_base
     executor_.execute([f = std::move(f)]() mutable { f.release()->call(); });
   }
 
-  virtual any_none_sender<> make_value_task(function<void()> f)
+  virtual any_none_sender<> make_value_task(any_none_sender<> from, function<void()> f)
   {
-    return executor_.make_value_task(std::move(f));
+    return executor_.make_value_task(from, std::move(f));
   }
 
   virtual const type_info& target_type() const
@@ -498,11 +498,11 @@ public:
     impl_ ? impl_->execute(std::move(fp)) : throw bad_executor();
   }
 
-  template<class Function>
+  template<Sender From, class Function>
     requires Invocable<Function&>
-  auto make_value_task(Function f) const -> Sender
+  auto make_value_task(From from, Function f) const -> Sender
   {
-    return impl_ ? impl_->make_value_task(std::move(f)) : throw bad_executor();
+    return impl_ ? impl_->make_value_task(std::move(from), std::move(f)) : throw bad_executor();
   }
 
   // TODO: This should type-erase the receiver and pass it through to
