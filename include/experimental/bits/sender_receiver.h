@@ -433,20 +433,20 @@ public:
     void set_value(Args... args) { impl_->set_value((Args&&) args...); }
 };
 
-template <class E = std::exception_ptr, class... Args>
+template <Receiver To>
 struct any_sender
 {
 private:
     struct interface : __cloneable<interface>
     {
-        virtual void submit(any_receiver<E, Args...> to) = 0;
+        virtual void submit(To) = 0;
     };
-    template <SenderTo<any_receiver<E, Args...>> From>
+    template <SenderTo<To> From>
     struct model : interface
     {
         From from_;
         model(From from) : from_(std::move(from)) {}
-        void submit(any_receiver<E, Args...> to) override { execution::submit(from_, std::move(to)); }
+        void submit(To to) override { execution::submit(from_, std::move(to)); }
         unique_ptr<interface> clone() const override { return make_unique<model>(from_); }
     };
     __pimpl_ptr<interface> impl_;
@@ -454,12 +454,12 @@ private:
 public:
     any_sender() = default;
     template <class From>
-      requires SenderTo<not_self_t<From>, any_receiver<E, Args...>>
+      requires SenderTo<not_self_t<From>, To>
     any_sender(From from)
       : impl_(make_unique<model<From>>(std::move(from)))
     {}
     static constexpr void query(sender_t) noexcept {}
-    void submit(any_receiver<E, Args...> to) { impl_->submit(std::move(to)); }
+    void submit(To to) { impl_->submit(std::move(to)); }
 };
 
 // template <class Adapt, class From>

@@ -138,7 +138,8 @@ struct impl_base
   virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
   virtual void execute(std::unique_ptr<bulk_func_base> f, std::size_t n, std::shared_ptr<shared_factory_base> sf) = 0;
-  virtual any_sender<> make_bulk_value_task(any_sender<>, function<void(size_t, shared_ptr<void>&)>, size_t, function<shared_ptr<void>()>) = 0;
+  virtual any_sender<any_receiver<>> make_bulk_value_task(
+      any_sender<any_receiver<>>, function<void(size_t, shared_ptr<void>&)>, size_t, function<shared_ptr<void>()>) = 0;
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
   virtual const void* target() const = 0;
@@ -182,8 +183,8 @@ struct impl : impl_base
     return typeid(executor_);
   }
 
-  virtual any_sender<> make_bulk_value_task(
-    any_sender<> from, 
+  virtual any_sender<any_receiver<>> make_bulk_value_task(
+    any_sender<any_receiver<>> from,
     function<void(size_t, shared_ptr<void>&)> f,
     size_t n,
     function<shared_ptr<void>()> sf)

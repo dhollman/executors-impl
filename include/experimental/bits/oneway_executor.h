@@ -139,7 +139,7 @@ struct impl_base
   virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
   virtual void execute(std::unique_ptr<oneway_func_base> f) = 0;
-  virtual any_sender<> make_value_task(any_sender<>, function<void()> f) = 0;
+  virtual any_sender<any_receiver<>> make_value_task(any_sender<any_receiver<>>, function<void()> f) = 0;
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
   virtual const void* target() const = 0;
@@ -176,7 +176,8 @@ struct impl : impl_base
     executor_.execute([f = std::move(f)]() mutable { f.release()->call(); });
   }
 
-  virtual any_sender<> make_value_task(any_sender<> from, function<void()> f)
+  virtual any_sender<any_receiver<>> make_value_task(
+      any_sender<any_receiver<>> from, function<void()> f)
   {
     return executor_.make_value_task(from, std::move(f));
   }
