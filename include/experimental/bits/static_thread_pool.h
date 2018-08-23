@@ -87,7 +87,7 @@ class static_thread_pool
     static constexpr execution::mapping_t query(execution::mapping_t) { return execution::mapping.thread; }
 
     // This is a single sender.
-    static constexpr execution::sender_t::single_t query(execution::sender_t) { return execution::sender.single; }
+    static constexpr void query(execution::sender_t) {}
 
     // Allocator.
     executor_impl<Interface, Blocking, Continuation, Work, std::allocator<void>>
@@ -135,11 +135,9 @@ class static_thread_pool
       From from_;
       Function f_;
       executor_impl this_;
-      static constexpr auto query(execution::sender_t)
-      {
-        return execution::sender.none;
-      }
-      template <execution::NoneReceiver To>
+      static constexpr void query(execution::sender_t)
+      {}
+      template <execution::ReceiverOf<exception_ptr> To>
       void submit(To to)
       {
         struct __receiver
@@ -148,10 +146,8 @@ class static_thread_pool
           To to_;
           static_thread_pool* pool_;
           ProtoAllocator allocator_;
-          static constexpr auto query(execution::receiver_t)
-          {
-            return execution::receiver.none;
-          }
+          static constexpr void query(execution::receiver_t)
+          {}
           void set_error(std::exception_ptr e)
           {
             execution::set_error(to_, e);
@@ -191,58 +187,67 @@ class static_thread_pool
     template <execution::Sender From, class Function, class SharedFactory>
       requires Invocable<SharedFactory&> &&
                Invocable<Function&, size_t, invoke_result_t<SharedFactory&>&>
-    struct __bulk_oneway_sender
+    struct __bulk_sender
     {
       From from_;
       Function f_;
       size_t n_;
       SharedFactory sf_;
       executor_impl this_;
-      static constexpr auto query(execution::sender_t)
+      static constexpr void query(execution::sender_t)
+      {}
+      template <execution::Receiver To>
+      struct __receiver
       {
-        return execution::sender.none;
-      }
-      template <execution::NoneReceiver To>
+        Function f_;
+        size_t n_;
+        SharedFactory sf_;
+        To to_;
+        static_thread_pool* pool_;
+        ProtoAllocator allocator_;
+        static constexpr void query(execution::receiver_t)
+        {}
+        template <class E>
+          requires Invocable<execution::set_error_fn const&, To&, E>
+        void set_error(E&& e)
+        {
+          execution::set_error(to_, (E&&) e);
+        }
+        void set_done()
+        {
+          execution::set_done(to_);
+        }
+        // using __composed_fn =
+        //     __compose_result_t<
+        //       __binder1st<execution::set_value_fn, To&>,
+        template <class... Ts>
+          //requires Invocable TODO constrain this properly!
+        void set_value(Ts&&... ts)
+        {
+          pool_->bulk_execute(Blocking{}, Continuation{}, allocator_,
+            [f = std::move(f_), n = n_, to = std::move(to_), args = make_tuple((Ts&&) ts...)](
+                size_t m, pair<size_t, invoke_result_t<SharedFactory&>>& s) mutable
+            {
+              f(m, s.second);
+              // If we had a bulk reduce function, we could drop the atomic here.
+              if (0 == --atomic_ref<size_t>(s.first))
+                execution::set_done(to);
+            },
+            n_,
+            [sf = std::move(sf_), n = n_]() mutable
+            {
+              return std::make_pair(n, sf());
+            }
+          );
+        }
+      };
+      template <execution::Receiver To>
+        requires execution::SenderTo<From, __receiver<To>>
       void submit(To to)
       {
-        struct __receiver
-        {
-          Function f_;
-          size_t n_;
-          SharedFactory sf_;
-          To to_;
-          static_thread_pool* pool_;
-          ProtoAllocator allocator_;
-          static constexpr auto query(execution::receiver_t)
-          {
-            return execution::receiver.none;
-          }
-          void set_error(std::exception_ptr e)
-          {
-            execution::set_error(to_, e);
-          }
-          void set_done()
-          {
-            pool_->bulk_execute(Blocking{}, Continuation{}, allocator_,
-              [f = std::move(f_), n = n_, to = std::move(to_)](
-                  size_t m, pair<size_t, invoke_result_t<SharedFactory&>>& s) mutable
-              {
-                f(m, s.second);
-                // If we had a bulk reduce function, we could drop the atomic here.
-                if (0 == --atomic_ref<size_t>(s.first))
-                  execution::set_done(to);
-              },
-              n_,
-              [sf = std::move(sf_), n = n_]() mutable
-              {
-                return std::make_pair(n, sf());
-              }
-            );
-          }
-        };
         execution::submit(
           from_,
-          __receiver{std::move(f_), n_, std::move(sf_), std::move(to), this_.pool_, this_.allocator_}
+          __receiver<To>{std::move(f_), n_, std::move(sf_), std::move(to), this_.pool_, this_.allocator_}
         );
       }
       executor_impl executor() const
@@ -258,11 +263,11 @@ class static_thread_pool
     execution::Sender make_bulk_value_task(
         From from, Function f, std::size_t n, SharedFactory sf) const
     {
-      return __bulk_oneway_sender<From, Function, SharedFactory>{
+      return __bulk_sender<From, Function, SharedFactory>{
         std::move(from), std::move(f), n, std::move(sf), *this};
     }
 
-    template <execution::SingleReceiver<executor_impl&> To>
+    template <execution::ReceiverOf<exception_ptr, executor_impl&> To>
     void submit(To to)
     {
       set_value(to, *this);

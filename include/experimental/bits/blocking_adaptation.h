@@ -1,6 +1,8 @@
 #ifndef STD_EXPERIMENTAL_BITS_BLOCKING_ADAPTATION_H
 #define STD_EXPERIMENTAL_BITS_BLOCKING_ADAPTATION_H
 
+#include <tuple>
+
 #include <experimental/bits/enumeration.h>
 #include <experimental/bits/enumerator_adapter.h>
 #include <experimental/bits/sender_receiver.h>
@@ -33,59 +35,70 @@ private:
     using impl::enumerator_adapter<adapter, Executor,
       blocking_adaptation_t, allowed_t>::enumerator_adapter;
 
-    template<class Function> auto execute(Function f) const
-      -> decltype(inner_declval<Function>().execute(std::move(f)))
-    {
-      return this->executor_.execute(std::move(f));
-    }
+    // template<class Function> auto execute(Function f) const
+    //   -> decltype(inner_declval<Function>().execute(std::move(f)))
+    // {
+    //   return this->executor_.execute(std::move(f));
+    // }
 
     template <Sender From, class Function>
-      requires Invocable<Function&>
-    struct __oneway_sender
+    struct __sender
     {
       From from_;
       Function f_;
       adapter this_;
-      static constexpr auto query(sender_t)
+      template <Receiver To>
+      struct __receiver
       {
-        return sender.none;
-      }
-      template <NoneReceiver To>
-      void submit(To to)
-      {
-        struct __receiver
+        Function f_;
+        To to_;
+        Executor exec_;
+        using __composed_fn =
+          __compose_result_t<
+            __binder1st<execution::set_value_fn, To&>,
+            Function&>;
+        static constexpr void query(execution::receiver_t)
+        {}
+        template <class E>
+          requires Invocable<execution::set_error_fn const&, To&, E>
+        void set_error(E&& e)
         {
-          Function f_;
-          To to_;
-          Executor exec_;
-          static constexpr auto query(execution::receiver_t)
-          {
-            return execution::receiver.none;
-          }
-          void set_error(std::exception_ptr e)
-          {
-            execution::set_error(to_, e);
-          }
-          void set_done()
-          {
-            execution::set_done(to_);
-          }
-          void set_value()
-          {
-            exec_.submit(
-              single_receiver{
-                [f = std::move(f_), to = std::move(to_)](auto) mutable
+          execution::set_error(to_, (E&&) e);
+        }
+        void set_done()
+        {
+          execution::set_done(to_);
+        }
+        template <class... Ts>
+        void set_value(Ts&&... ts) requires Invocable<__composed_fn, Ts...>
+        {
+          execution::submit(
+            exec_,
+            receiver{
+                // make_tuple? Or forward lvalue references?
+              on_value{
+                [f = std::move(f_), to = std::move(to_), args = std::make_tuple((Ts&&) ts...)](auto) mutable
                 {
-                  f();
-                  execution::set_value(to);
+                  // Roughly: set_value(to, f(ts...))
+                  std::apply(
+                      __compose(__bind1st(execution::set_value, std::ref(to)), std::move(f)),
+                      std::move(args)
+                  );
                 }
               }
-            );
-          }
-        };
+            }
+          );
+        }
+      };
+      static constexpr void query(sender_t)
+      {}
+      template <Receiver To>
+        requires SenderTo<From, __receiver<To>>
+      void submit(To to)
+      {
         execution::submit(
           from_,
-          __receiver{std::move(f_), std::move(to), this_.executor}
+          __receiver<To>{std::move(f_), std::move(to), this_.executor}
         );
       }
       auto executor() const
@@ -94,68 +107,33 @@ private:
       }
     };
     template<Sender From, class Function>
-      requires Invocable<Function&>
     auto make_value_task(From from, Function f) const -> Sender
     {
-      return __oneway_sender<From, Function>{std::move(from), std::move(f), *this};
+      return __sender<From, Function>{std::move(from), std::move(f), *this};
     }
 
-    template<class Function>
-    auto twoway_execute(Function f) const
-      -> decltype(inner_declval<Function>().twoway_execute(std::move(f)))
-    {
-      return this->executor_.twoway_execute(std::move(f));
-    }
-
-    // template <class Function>
-    //   requires _NonVoidInvocable<Function&>
-    // struct __twoway_sender
-    // {
-    //   Function f_;
-    //   adapter this_;
-    //   static constexpr auto query(sender_t)
-    //   {
-    //     return sender.single;
-    //   }
-    //   template <SingleReceiver<invoke_result_t<Function&>> To>
-    //   void submit(To to)
-    //   {
-    //     this_.executor.submit(
-    //       single_receiver{
-    //         [f = std::move(f_), to = std::move(to)](Executor) mutable
-    //         {
-    //           set_value(to, f());
-    //         }
-    //       }
-    //     );
-    //   }
-    //   auto executor() const
-    //   {
-    //     return this_;
-    //   }
-    // };
     // template<class Function>
-    //   requires _NonVoidInvocable<Function&>
-    // auto twoway_execute_(Function f) const -> Sender<sender_t::single_t>
+    // auto twoway_execute(Function f) const
+    //   -> decltype(inner_declval<Function>().twoway_execute(std::move(f)))
     // {
-    //   return __twoway_sender<Function>{std::move(f), *this};
+    //   return this->executor_.twoway_execute(std::move(f));
     // }
 
-    template<class Function, class SharedFactory>
-    auto bulk_execute(Function f, std::size_t n, SharedFactory sf) const
-      -> decltype(inner_declval<Function>().bulk_execute(std::move(f), n, std::move(sf)))
-    {
-      return this->executor_.bulk_execute(std::move(f), n, std::move(sf));
-    }
+    // template<class Function, class SharedFactory>
+    // auto bulk_execute(Function f, std::size_t n, SharedFactory sf) const
+    //   -> decltype(inner_declval<Function>().bulk_execute(std::move(f), n, std::move(sf)))
+    // {
+    //   return this->executor_.bulk_execute(std::move(f), n, std::move(sf));
+    // }
 
-    template<class Function, class ResultFactory, class SharedFactory>
-    auto bulk_twoway_execute(Function f, std::size_t n, ResultFactory rf, SharedFactory sf) const
-      -> decltype(inner_declval<Function>().bulk_twoway_execute(std::move(f), n, std::move(rf), std::move(sf)))
-    {
-      return this->executor_.bulk_twoway_execute(std::move(f), n, std::move(rf), std::move(sf));
-    }
+    // template<class Function, class ResultFactory, class SharedFactory>
+    // auto bulk_twoway_execute(Function f, std::size_t n, ResultFactory rf, SharedFactory sf) const
+    //   -> decltype(inner_declval<Function>().bulk_twoway_execute(std::move(f), n, std::move(rf), std::move(sf)))
+    // {
+    //   return this->executor_.bulk_twoway_execute(std::move(f), n, std::move(rf), std::move(sf));
+    // }
 
-    template<SingleReceiver<adapter&> To>
+    template<ReceiverOf<exception_ptr, adapter&> To>
     void submit(To to)
     {
       set_value((To&&) to, *this);

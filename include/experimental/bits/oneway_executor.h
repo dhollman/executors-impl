@@ -139,7 +139,7 @@ struct impl_base
   virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
   virtual void execute(std::unique_ptr<oneway_func_base> f) = 0;
-  virtual any_none_sender<> make_value_task(any_none_sender<>, function<void()> f) = 0;
+  virtual any_sender<> make_value_task(any_sender<>, function<void()> f) = 0;
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
   virtual const void* target() const = 0;
@@ -176,7 +176,7 @@ struct impl : impl_base
     executor_.execute([f = std::move(f)]() mutable { f.release()->call(); });
   }
 
-  virtual any_none_sender<> make_value_task(any_none_sender<> from, function<void()> f)
+  virtual any_sender<> make_value_task(any_sender<> from, function<void()> f)
   {
     return executor_.make_value_task(from, std::move(f));
   }
@@ -356,7 +356,7 @@ public:
   {
     // All valid Executors are single senders that send themselves (or a subexecutor)
     // in the value channel.
-    static_assert((bool) execution::Sender<Executor, execution::sender_t::single_t>);
+    static_assert((bool) execution::Sender<Executor>);
     auto e2 = execution::require(std::move(e), oneway);
     impl_ = new oneway_executor_impl::impl<decltype(e2), SupportableProperties...>(std::move(e2));
   }
@@ -489,7 +489,7 @@ public:
 
   // All executors are single senders that forward themselves (or a subexecutor)
   // through the value channel.
-  static constexpr sender_t::single_t query(sender_t) noexcept { return sender.single; }
+  static constexpr void query(sender_t) noexcept {}
 
   template<class Function>
   void execute(Function f) const
@@ -508,7 +508,7 @@ public:
   // TODO: This should type-erase the receiver and pass it through to
   // the wrapped executor's submit, but we haven't implemented type-erased
   // receivers yet.
-  template<SingleReceiver<polymorphic_executor_type&> To>
+  template<ReceiverOf<exception_ptr, polymorphic_executor_type&> To>
   void submit(To to)
   {
     set_value(to, *this);

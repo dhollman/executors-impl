@@ -26,9 +26,13 @@ concept bool Invocable =
     };
 
 template<class F, class... Args>
-concept bool _NonVoidInvocable =
+concept bool _VoidInvocable =
   Invocable<F, Args...> &&
-  !Same<void const volatile, invoke_result_t<F, Args...> const volatile>;
+  Same<void const volatile, invoke_result_t<F, Args...> const volatile>;
+
+template<class F, class... Args>
+concept bool _NonVoidInvocable =
+  Invocable<F, Args...> && !_VoidInvocable<F, Args...>;
 
 namespace experimental {
 inline namespace executors_v1 {
@@ -44,103 +48,51 @@ constexpr bool const __property_base<Requirable, Preferable>::is_requirable;
 template <bool Requirable, bool Preferable>
 constexpr bool const __property_base<Requirable, Preferable>::is_preferable;
 
-inline constexpr struct receiver_t : __property_base<false, false>
-{
-    using polymorphic_query_result_type = size_t;
-    static inline constexpr struct none_t : __property_base<false, false> {
-        static inline constexpr size_t const cardinality = 0;
-        constexpr operator size_t () const noexcept { return cardinality; }
-    } const none{};
-    static inline constexpr struct single_t : none_t {
-        static inline constexpr size_t const cardinality = 1;
-        constexpr operator size_t () const noexcept { return cardinality; }
-    } const single{};
-} const receiver {};
+struct receiver_t : __property_base<false, false> {};
 
-constexpr receiver_t::none_t const receiver_t::none;
-constexpr receiver_t::single_t const receiver_t::single;
-constexpr size_t const receiver_t::none_t::cardinality;
-constexpr size_t const receiver_t::single_t::cardinality;
-
-template <class To, class Tag = receiver_t::none_t>
+template <class To>
 concept bool _Receiver =
-    DerivedFrom<Tag, receiver_t::none_t> &&
-    requires (To& to, Tag t)
-    {
-        { Tag::cardinality } -> Same<size_t const>&;
-        { query_impl::customization_point<>(to, receiver) } -> DerivedFrom<Tag>;
-    } &&
-    Tag::cardinality <= receiver.single.cardinality;
+    Invocable<query_impl::query_fn const&, To&, receiver_t>;
 
-inline constexpr struct __set_done
+inline constexpr struct set_done_fn
 {
     template <_Receiver To>
       requires requires (To& to) { to.set_done(); }
     void operator()(To& to) const noexcept(noexcept(to.set_done()))
     {
-        to.set_done();
+        (void) to.set_done();
     }
     template <_Receiver To>
       requires requires (To& to) { set_done(to); }
     void operator()(To& to) const volatile noexcept(noexcept(set_done(to)))
     {
-        set_done(to);
+        (void) set_done(to);
     }
 } const set_done {};
 
-template <class To, class Tag = receiver_t::none_t>
+template <class To>
 concept bool Receiver =
-    _Receiver<To, Tag> &&
-    requires (To& to)
-    {
-        set_done(to);
-    };
+    _Receiver<To> && Invocable<set_done_fn const&, To&>;
 
-template <Receiver To>
-using receiver_category_t =
-    decay_t<decltype(query_impl::customization_point<>(declval<To&>(), receiver))>;
+inline constexpr struct set_value_fn
+{
+    template <Receiver To, class... Args>
+      requires requires (To& to, Args&&... args) { to.set_value((Args&&) args...); }
+    void operator()(To& to, Args&&... args) const
+        noexcept(noexcept(to.set_value((Args&&) args...)))
+    {
+        (void) to.set_value((Args&&) args...);
+    }
+    template <Receiver To, class... Args>
+      requires requires (To& to, Args&&... args) { set_value(to, (Args&&) args...); }
+    void operator()(To& to, Args&&... args) const
+        noexcept(noexcept(set_value(to, (Args&&) args...)))
+    {
+        (void) set_value(to, (Args&&) args...);
+    }
+} const set_value {};
 
-namespace __set_value
-{
-template <Receiver To>
-  requires !Receiver<To, receiver_t::single_t>
-void set_value(To& to) noexcept(noexcept(set_done(to)))
-{
-    set_done(to);
-}
-struct __fn
-{
-    template <Receiver To>
-      requires requires (To& to) { to.set_value(); } &&
-        !Receiver<To, receiver_t::single_t>
-    void operator()(To& to) const noexcept(noexcept(to.set_value()))
-    {
-        to.set_value();
-    }
-    template <Receiver To>
-      requires requires (To& to) { set_value(to); } &&
-        !Receiver<To, receiver_t::single_t>
-    void operator()(To& to) const volatile noexcept(noexcept(set_value(to)))
-    {
-        set_value(to);
-    }
-    template <Receiver<receiver_t::single_t> To, class V>
-      requires requires (To& to, V&& v) { to.set_value((V&&) v); }
-    void operator()(To& to, V&& v) const noexcept(noexcept(to.set_value((V&&) v)))
-    {
-        to.set_value((V&&) v);
-    }
-    template <Receiver<receiver_t::single_t> To, class V>
-      requires requires (To& to, V&& v) { set_value(to, (V&&) v); }
-    void operator()(To& to, V&& v) const volatile noexcept(noexcept(set_value(to, (V&&) v)))
-    {
-        set_value(to, (V&&) v);
-    }
-};
-}
-inline constexpr __set_value::__fn const set_value {};
-
-inline constexpr struct __set_error
+inline constexpr struct set_error_fn
 {
     template <Receiver To, class E>
       requires requires (To& to, E&& e) { to.set_error((E&&) e); }
@@ -156,78 +108,34 @@ inline constexpr struct __set_error
     }
 } const set_error {};
 
-template <class To, class E = exception_ptr>
-concept bool _NoneReceiver =
+template <class To, class E = exception_ptr, class... Args>
+concept bool ReceiverOf =
     Receiver<To> &&
-    requires (To& to, E&& e)
-    {
-        set_error(to, static_cast<E&&>(e));
-    };
-
-template <class To, class E = exception_ptr>
-concept bool NoneReceiver =
-    _NoneReceiver<To, E> &&
-    requires (To& to)
-    {
-        set_value(to);
-    };
-
-template <class To, class V, class E = exception_ptr>
-concept bool SingleReceiver =
-    Receiver<To, receiver_t::single_t> &&
-    _NoneReceiver<To, E> &&
-    requires (To& to, V&& v)
-    {
-        set_value(to, static_cast<V&&>(v));
-    };
+    Invocable<set_error_fn const&, To&, E> &&
+    Invocable<set_value_fn const&, To&, Args...>;
 
 namespace __test__
 {
     struct S
     {
-        static constexpr auto query(receiver_t) noexcept
-        {
-            return receiver.single;
-        }
+        static constexpr void query(receiver_t) noexcept
+        {}
         void set_value(char const*) {}
     };
     void set_done(S) {}
     void set_error(S, int) {}
 
     static_assert((bool) Receiver<S>);
-    static_assert(!(bool) NoneReceiver<S, int>);
-    static_assert((bool) SingleReceiver<S, char const*, int>);
+    static_assert((bool) ReceiverOf<S, int, char const*>);
 } // namespace __test__
 
-inline constexpr struct sender_t : __property_base<false, false>
-{
-    using polymorphic_query_result_type = size_t;
-    static inline constexpr struct none_t : __property_base<false, false> {
-        static inline constexpr size_t const cardinality = 0;
-        constexpr operator size_t () const noexcept { return cardinality; }
-    } const none{};
-    static inline constexpr struct single_t : none_t {
-        static inline constexpr size_t const cardinality = 1;
-        constexpr operator size_t () const noexcept { return cardinality; }
-    } const single{};
-} const sender {};
+struct sender_t : __property_base<false, false> {};
 
-constexpr sender_t::none_t const sender_t::none;
-constexpr sender_t::single_t const sender_t::single;
-constexpr size_t const sender_t::none_t::cardinality;
-constexpr size_t const sender_t::single_t::cardinality;
-
-template <class From, class Tag = sender_t::none_t>
+template <class From>
 concept bool _Sender =
-    DerivedFrom<Tag, sender_t::none_t> &&
-    requires (From& from, Tag t)
-    {
-        { Tag::cardinality } -> Same<size_t const>&;
-        { query_impl::customization_point<>(from, sender) } -> DerivedFrom<Tag>;
-    } &&
-    Tag::cardinality <= sender.single.cardinality;
+    Invocable<query_impl::query_fn const&, From&, sender_t>;
 
-namespace __get_executor__
+namespace __get_executor
 {
 template <_Sender From>
 auto get_executor(From from)
@@ -250,45 +158,33 @@ struct __fn
     }
 };
 }
-inline constexpr __get_executor__::__fn const get_executor {};
+inline constexpr struct get_executor_fn : __get_executor::__fn {} const get_executor {};
 
-template <class From, class Tag = sender_t::none_t>
+template <class From>
 concept bool Sender =
-    _Sender<From, Tag> &&
-    requires (From& from)
-    {
-        { get_executor(from) } -> _Sender<Tag>;
-    };
+    _Sender<From> && Invocable<get_executor_fn const&, From&>;
 
-template <Sender From>
-using sender_category_t =
-    decay_t<decltype(query_impl::customization_point<>(declval<From&>(), sender))>;
-
-inline constexpr struct __submit
+inline constexpr struct submit_fn
 {
     template <_Sender From, Receiver To>
-      requires requires (From& from, To to) { from.submit((To&&) to); } &&
-        sender_category_t<From>::cardinality <= receiver_category_t<To>::cardinality
-    void operator()(From& from, To to) const noexcept(noexcept(from.submit((To&&) to)))
+      requires requires (From& from, To to) { from.submit((To&&) to); }
+    void operator()(From& from, To to) const
+        noexcept(noexcept(from.submit((To&&) to)))
     {
-        from.submit((To&&) to);
+        (void) from.submit((To&&) to);
     }
     template <_Sender From, Receiver To>
-      requires requires (From& from, To to) { submit(from, (To&&) to); } &&
-        sender_category_t<From>::cardinality <= receiver_category_t<To>::cardinality
-    void operator()(From& from, To to) const volatile noexcept(noexcept(submit(from, (To&&) to)))
+      requires requires (From& from, To to) { submit(from, (To&&) to); }
+    void operator()(From& from, To to) const volatile
+        noexcept(noexcept(submit(from, (To&&) to)))
     {
-        submit(from, (To&&) to);
+        (void) submit(from, (To&&) to);
     }
 } const submit {};
 
 template <class From, class To>
 concept bool SenderTo =
-    Sender<From> && Receiver<To> &&
-    requires (From& from, To&& to)
-    {
-        submit(from, (To&&) to);
-    };
+    Sender<From> && Receiver<To> && Invocable<submit_fn const&, From&, To>;
 
 template <class To, class From>
 concept bool ReceiverFrom = SenderTo<From, To>;
@@ -297,74 +193,109 @@ namespace __test__
 {
     struct T
     {
-        static constexpr auto query(sender_t) noexcept
-        {
-            return sender.single;
-        }
-        template <SingleReceiver<char const*, int> To>
+        static constexpr void query(sender_t) noexcept
+        {}
+        template <ReceiverOf<int, char const*> To>
         void submit(To to)
         {
             set_value(to, "hello world");
         }
     };
-    static_assert(Sender<T>);
-    static_assert(SenderTo<T, S>);
+    static_assert((bool) Sender<T>);
+    static_assert((bool) SenderTo<T, S>);
 } // namespace __test__
 
-struct __nope
-{};
-inline constexpr struct __ignore_done
+struct __ignore
 {
-    void operator()() const noexcept
+    template <class... Ts>
+    __ignore(Ts&&...) {}
+    template <class... Ts>
+    void operator()(Ts&&...) const noexcept
     {}
-} const ignore_done{};
-inline constexpr struct __ignore_error
-{
-    template <class E>
-    void operator()(E&&) const noexcept
-    {}
-} const ignore_error{};
-inline constexpr struct __ignore_value
-{
-    void operator()() const noexcept
-    {}
-    template <class V>
-    void operator()(V&&) const noexcept
-    {}
-} const ignore_value{};
+};
 
-template <class Tag, class OnDone, class OnError, class OnValue>
-  requires Invocable<OnDone&> &&
-    (!Same<Tag, sender_t::none_t> || Invocable<OnValue&>)
-struct __basic_receiver
+template <class F = __ignore>
+struct on_done : F
+{
+    on_done() = default;
+    on_done(F f) : F(std::move(f)) {}
+};
+template <class F>
+on_done(F) -> on_done<F>;
+
+template <class F = __ignore>
+struct on_error : F
+{
+    on_error() = default;
+    on_error(F f) : F(std::move(f)) {}
+};
+template <class F>
+on_error(F) -> on_error<F>;
+
+template <class F = __ignore>
+struct on_value : F
+{
+    on_value() = default;
+    on_value(F f) : F(std::move(f)) {}
+};
+template <class F>
+on_value(F) -> on_value<F>;
+
+template <template <class> class On>
+On<__ignore> __select_signal()
+{
+    return On<__ignore>{__ignore{}};
+}
+template <template <class> class On, class F, class... Rest>
+On<F> __select_signal(On<F> on, Rest&&...)
+{
+    return std::move(on);
+}
+template <template <class> class On, class F, class... Rest>
+On<F> __select_signal(__ignore, On<F> on, Rest&&...)
+{
+    return std::move(on);
+}
+template <template <class> class On, class F, class... Rest>
+On<F> __select_signal(__ignore, __ignore, On<F> on, Rest&&...)
+{
+    return std::move(on);
+}
+template <template <class> class On, class F, class... Rest>
+On<__ignore> __select_signal(__ignore, __ignore, __ignore, Rest&&...)
+{
+    return On<__ignore>{__ignore{}};
+}
+template <template <class> class On, class... Args>
+using __select_signal_t = decltype(__select_signal<On>(declval<Args>()...));
+
+template <class F, template <class> class On>
+concept bool _InstanceOf =
+    requires (F& f) { {f} -> On<auto>; };
+
+template <class S>
+concept bool Signal =
+    _InstanceOf<S, on_done> || _InstanceOf<S, on_error> || _InstanceOf<S, on_value>;
+
+template <_InstanceOf<on_done> OnDone,
+          _InstanceOf<on_error> OnError,
+          _InstanceOf<on_value> OnValue>
+  requires Invocable<OnDone&>
+struct receiver
 {
 private:
     [[no_unique_address]] OnDone on_done_{};
     [[no_unique_address]] OnError on_error_{};
     [[no_unique_address]] OnValue on_value_{};
 public:
-    static constexpr auto query(receiver_t)
-    {
-        return Tag{};
-    }
-    __basic_receiver() = default;
-    __basic_receiver(OnValue on_value) requires Same<Tag, receiver_t::single_t>
-      : on_value_(std::move(on_value))
+    static constexpr void query(receiver_t)
     {}
-    __basic_receiver(OnValue on_value, OnError on_error) requires Same<Tag, receiver_t::single_t>
-      : on_error_(std::move(on_error)), on_value_(std::move(on_value))
-    {}
-    __basic_receiver(OnValue on_value, OnError on_error, OnDone on_done)
-        requires Same<Tag, receiver_t::single_t>
-      : on_done_(std::move(on_done)), on_error_(std::move(on_error)),
-        on_value_(std::move(on_value))
-    {}
-    __basic_receiver(OnError on_error) requires Same<Tag, receiver_t::none_t>
-      : on_error_(std::move(on_error))
-    {}
-    __basic_receiver(OnError on_error, OnDone on_done)
-        requires Same<Tag, receiver_t::none_t>
-      : on_done_(std::move(on_done)), on_error_(std::move(on_error))
+    template <class... Ss>
+      requires sizeof...(Ss) <= 3 && (Signal<Ss> &&...)
+    receiver(Ss... ss)
+      : on_done_(__select_signal<on_done>(std::move(ss)...))
+      , on_error_(__select_signal<on_error>(std::move(ss)...))
+      , on_value_(__select_signal<on_value>(std::move(ss)...))
     {}
     void set_done()
     {
@@ -376,63 +307,37 @@ public:
     {
         on_error_((E&&) e);
     }
-    void set_value() requires Same<Tag, receiver_t::none_t>
+    template <class... Args>
+      requires Invocable<OnValue&, Args...>
+    void set_value(Args&&... args)
     {
-        on_done_(); // TODO
-    }
-    template <class V>
-      requires Invocable<OnValue&, V>
-    void set_value(V&& v) requires Same<Tag, receiver_t::single_t>
-    {
-        on_value_((V&&) v);
+        on_value_((Args&&) args...);
     }
 };
+template <class... Ss>
+  requires sizeof...(Ss) <= 3 && (Signal<Ss> &&...)
+receiver(Ss...) ->
+    receiver<
+        __select_signal_t<on_done, Ss...>,
+        __select_signal_t<on_error, Ss...>,
+        __select_signal_t<on_value, Ss...>>;
 
-template <class OnError = __ignore_error, class OnDone = __ignore_done>
-struct none_receiver : __basic_receiver<receiver_t::none_t, OnDone, OnError, __ignore_value>
-{
-    none_receiver() = default;
-    using none_receiver::__basic_receiver::__basic_receiver;
-};
-none_receiver() -> none_receiver<>;
-template<class OnError>
-none_receiver(OnError) -> none_receiver<OnError>;
-template<class OnError, class OnDone>
-  requires Invocable<OnDone&>
-none_receiver(OnError, OnDone) -> none_receiver<OnError, OnDone>;
-
-template <class OnValue = __ignore_value, class OnError = __ignore_error, class OnDone = __ignore_done>
-struct single_receiver : __basic_receiver<receiver_t::single_t, OnDone, OnError, OnValue>
-{
-    single_receiver() = default;
-    using single_receiver::__basic_receiver::__basic_receiver;
-};
-single_receiver() -> single_receiver<>;
-template<class OnValue>
-single_receiver(OnValue) -> single_receiver<OnValue>;
-template<class OnValue, class OnError>
-single_receiver(OnValue, OnError) -> single_receiver<OnValue, OnError>;
-template<class OnValue, class OnError, class OnDone>
-single_receiver(OnValue, OnError, OnDone) -> single_receiver<OnValue, OnError, OnDone>;
-
-template <class Tag, class OnSubmit, class OnExecutor = __nope>
-struct __basic_sender
+struct __nope {};
+template <class OnSubmit, class OnExecutor = __nope>
+struct sender
 {
 private:
     [[no_unique_address]] OnSubmit on_submit_{};
     [[no_unique_address]] OnExecutor on_executor_{};
-
 public:
-    __basic_sender() = default;
-    __basic_sender(OnSubmit on_submit) : on_submit_(std::move(on_submit))
+    sender() = default;
+    sender(OnSubmit on_submit) : on_submit_(std::move(on_submit))
     {}
-    __basic_sender(OnSubmit on_submit, OnExecutor on_executor)
+    sender(OnSubmit on_submit, OnExecutor on_executor)
       : on_submit_(std::move(on_submit)), on_executor_(std::move(on_executor))
     {}
-    static constexpr auto query(sender_t) noexcept
-    {
-        return Tag{};
-    }
+    static constexpr void query(sender_t) noexcept
+    {}
     template <Receiver To>
       requires Invocable<OnSubmit&, To>
     void submit(To to)
@@ -447,35 +352,18 @@ public:
 
 struct __noop_submit
 {
-    template <NoneReceiver To>
+    template <Receiver To>
+      requires Invocable<set_value_fn const&, To&>
     void operator()(To to)
     {
         set_value(to);
     }
 };
-template <class OnSubmit = __noop_submit, class OnExecutor = __nope>
-struct none_sender : __basic_sender<sender_t::none_t, OnSubmit, OnExecutor>
-{
-    none_sender() = default;
-    using none_sender::__basic_sender::__basic_sender;
-};
-none_sender() -> none_sender<>;
+sender() -> sender<__noop_submit>;
 template <class OnSubmit>
-none_sender(OnSubmit) -> none_sender<OnSubmit>;
+sender(OnSubmit) -> sender<OnSubmit>;
 template <class OnSubmit, class OnExecutor>
-none_sender(OnSubmit, OnExecutor) -> none_sender<OnSubmit, OnExecutor>;
-
-template <class OnSubmit, class OnExecutor = __nope>
-struct single_sender : __basic_sender<sender_t::single_t, OnSubmit, OnExecutor>
-{
-    single_sender() = default;
-    using single_sender::__basic_sender::__basic_sender;
-};
-
-template <class OnSubmit>
-single_sender(OnSubmit) -> single_sender<OnSubmit>;
-template <class OnSubmit, class OnExecutor>
-single_sender(OnSubmit, OnExecutor) -> single_sender<OnSubmit, OnExecutor>;
+sender(OnSubmit, OnExecutor) -> sender<OnSubmit, OnExecutor>;
 
 template <class Derived>
 struct __cloneable
@@ -510,95 +398,201 @@ public:
     Interface const& operator*() const noexcept { return *ptr_; }
 };
 
-template <class E = std::exception_ptr>
-struct any_none_receiver
+template <class E = std::exception_ptr, class... Args>
+struct any_receiver
 {
 private:
     struct interface : __cloneable<interface>
     {
         virtual void set_done() = 0;
         virtual void set_error(E) = 0;
+        virtual void set_value(Args...) = 0;
     };
-    template <NoneReceiver<E> To>
+    template <ReceiverOf<E, Args...> To>
     struct model : interface
     {
         To to_;
         model(To to) : to_(std::move(to)) {}
         void set_done() override { execution::set_done(to_); }
-        void set_error(E e) override { execution::set_error(to_, std::move(e)); }
+        void set_error(E e) override { execution::set_error(to_, (E&&) e); }
+        void set_value(Args... args) override { execution::set_value(to_, (Args&&) args...); }
         unique_ptr<interface> clone() const override { return make_unique<model>(to_); }
     };
     __pimpl_ptr<interface> impl_;
-    template <_NotSame_<any_none_receiver> A> using not_self_t = A;
+    template <_NotSame_<any_receiver> A> using not_self_t = A;
 public:
-    any_none_receiver() = default;
+    any_receiver() = default;
     template <class To>
-      requires NoneReceiver<not_self_t<To>, E>
-    any_none_receiver(To to)
+      requires ReceiverOf<not_self_t<To>, E, Args...>
+    any_receiver(To to)
       : impl_(make_unique<model<To>>(std::move(to)))
     {}
-    static constexpr auto query(receiver_t) noexcept { return receiver.none; }
+    static constexpr void query(receiver_t) noexcept {}
     void set_done() { impl_->set_done(); }
-    void set_error(E e) { impl_->set_error(std::move(e)); }
+    void set_error(E e) { impl_->set_error((E&&) e); }
+    void set_value(Args... args) { impl_->set_value((Args&&) args...); }
 };
 
-template <class E = std::exception_ptr>
-struct any_none_sender
+template <class E = std::exception_ptr, class... Args>
+struct any_sender
 {
 private:
     struct interface : __cloneable<interface>
     {
-        virtual void submit(any_none_receiver<E> to) = 0;
+        virtual void submit(any_receiver<E, Args...> to) = 0;
     };
-    template <SenderTo<any_none_receiver<E>> From>
+    template <SenderTo<any_receiver<E, Args...>> From>
     struct model : interface
     {
         From from_;
         model(From from) : from_(std::move(from)) {}
-        void submit(any_none_receiver<E> to) override { execution::submit(from_, std::move(to)); }
+        void submit(any_receiver<E, Args...> to) override { execution::submit(from_, std::move(to)); }
         unique_ptr<interface> clone() const override { return make_unique<model>(from_); }
     };
     __pimpl_ptr<interface> impl_;
-    template <_NotSame_<any_none_sender> A> using not_self_t = A;
+    template <_NotSame_<any_sender> A> using not_self_t = A;
 public:
-    any_none_sender() = default;
+    any_sender() = default;
     template <class From>
-      requires SenderTo<not_self_t<From>, any_none_receiver<E>>
-    any_none_sender(From from)
+      requires SenderTo<not_self_t<From>, any_receiver<E, Args...>>
+    any_sender(From from)
       : impl_(make_unique<model<From>>(std::move(from)))
     {}
-    static constexpr auto query(sender_t) noexcept { return sender.none; }
-    void submit(any_none_receiver<E> to) { impl_->submit(std::move(to)); }
+    static constexpr void query(sender_t) noexcept {}
+    void submit(any_receiver<E, Args...> to) { impl_->submit(std::move(to)); }
 };
 
+// template <class Adapt, class From>
+// concept bool Adaptor =
+//     Sender<From> &&
+//     requires (Adapt const &a, From& from)
+//     {
+//         { a.adapt(from) } -> Sender;
+//     };
 
-template <class Adapt, class From>
-concept bool Adaptor =
-    Sender<From> &&
-    requires (Adapt const &a, From& from)
-    {
-        { a.adapt(from) } -> Sender;
-    };
+// template <class Function>
+// class basic_adaptor
+// {
+//     Function f_;
+// public:
+//     basic_adaptor() = default;
+//     constexpr explicit basic_adaptor(Function f)
+//       : f_(std::move(f))
+//     {}
+//     template <Sender From>
+//       requires Invocable<Function&, From&> &&
+//                Sender<invoke_result_t<Function&, From&>>
+//     auto adapt(From& from) const
+//     {
+//         return f_(from);
+//     }
+// };
+// template <class Function>
+// basic_adaptor(Function) -> basic_adaptor<Function>;
 
-template <class Function>
-class basic_adaptor
+inline constexpr struct __compose_fn
 {
-    Function f_;
-public:
-    basic_adaptor() = default;
-    constexpr explicit basic_adaptor(Function f)
-      : f_(std::move(f))
-    {}
-    template <Sender From>
-      requires Invocable<Function&, From&> &&
-               Sender<invoke_result_t<Function&, From&>>
-    auto adapt(From& from) const
+    template <class F, class G>
+    struct __composed
     {
-        return f_(from);
+        [[no_unique_address]] F f_;
+        [[no_unique_address]] G g_;
+        template <class... Args>
+          requires Invocable<G, Args...> &&
+            Invocable<F, invoke_result_t<G, Args...>>
+        constexpr decltype(auto) operator()(Args&&... args) &&
+        {
+            return std::move(f_)(std::move(g_)((Args&&) args...));
+        }
+        template <class... Args>
+          requires _VoidInvocable<G, Args...> && Invocable<F>
+        constexpr decltype(auto) operator()(Args&&... args) &&
+        {
+            std::move(g_)((Args&&) args...);
+            return std::move(f_)();
+        }
+        template <class... Args>
+          requires Invocable<G&, Args...> &&
+            Invocable<F&, invoke_result_t<G&, Args...>>
+        constexpr decltype(auto) operator()(Args&&... args) &
+        {
+            return f_(g_((Args&&) args...));
+        }
+        template <class... Args>
+          requires _VoidInvocable<G&, Args...> && Invocable<F&>
+        constexpr decltype(auto) operator()(Args&&... args) &
+        {
+            g_((Args&&) args...);
+            return f_();
+        }
+        template <class... Args>
+          requires Invocable<G const&, Args...> &&
+            Invocable<F const&, invoke_result_t<G const&, Args...>>
+        constexpr decltype(auto) operator()(Args&&... args) const &
+        {
+            return f_(g_((Args&&) args...));
+        }
+        template <class... Args>
+          requires _VoidInvocable<G const&, Args...> && Invocable<F const&>
+        constexpr decltype(auto) operator()(Args&&... args) const &
+        {
+            g_((Args&&) args...);
+            return f_();
+        }
+    };
+    template <class F, class G>
+    constexpr __composed<F, G> operator()(F f, G g) const
+    {
+        return __composed<F, G>{std::move(f), std::move(g)};
     }
-};
-template <class Function>
-basic_adaptor(Function) -> basic_adaptor<Function>;
+} const __compose {};
+
+template <class F, class G>
+using __compose_result_t = decltype(__compose(declval<F>(), declval<G>()));
+
+inline constexpr struct __bind1st_fn
+{
+    template <class T>
+    static constexpr T __unwrap(T&&);
+    template <class T>
+    static constexpr T& __unwrap(reference_wrapper<T>);
+    template <class T>
+    using __unwrap_t = decltype(__unwrap(declval<T>()));
+    template <class F, class T>
+    struct __binder1st
+    {
+        [[no_unique_address]] F f_;
+        [[no_unique_address]] T t_;
+        template <class... Args>
+          requires Invocable<F, T, Args...>
+        constexpr decltype(auto) operator()(Args&&... args) &&
+        {
+            return ((F&&) f_)(((T&&) t_), (Args&&) args...);
+        }
+        template <class... Args>
+          requires Invocable<F&, T&, Args...>
+        constexpr decltype(auto) operator()(Args&&... args) &
+        {
+            return f_(t_, (Args&&) args...);
+        }
+        template <class... Args>
+          requires Invocable<F const&, T const&, Args...>
+        constexpr decltype(auto) operator()(Args&&... args) const &
+        {
+            return f_(t_, (Args&&) args...);
+        }
+    };
+    template <class F, class T>
+    constexpr __binder1st<__unwrap_t<F>, __unwrap_t<T>> operator()(F f, T t) const
+    {
+        return __binder1st<__unwrap_t<F>, __unwrap_t<T>>{std::move(f), std::move(t)};
+    }
+} const __bind1st {};
+
+template <class F, class T>
+using __binder1st = __bind1st_fn::__binder1st<F, T>;
+template <class F, class T>
+using __bind1st_result_t = decltype(__bind1st(declval<F>(), declval<T>()));
 
 } // namespace execution
 } // inline namespace executors_v1

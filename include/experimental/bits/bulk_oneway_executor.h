@@ -138,7 +138,7 @@ struct impl_base
   virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
   virtual void execute(std::unique_ptr<bulk_func_base> f, std::size_t n, std::shared_ptr<shared_factory_base> sf) = 0;
-  virtual any_none_sender<> make_bulk_value_task(any_none_sender<>, function<void(size_t, shared_ptr<void>&)>, size_t, function<shared_ptr<void>()>) = 0;
+  virtual any_sender<> make_bulk_value_task(any_sender<>, function<void(size_t, shared_ptr<void>&)>, size_t, function<shared_ptr<void>()>) = 0;
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
   virtual const void* target() const = 0;
@@ -182,8 +182,8 @@ struct impl : impl_base
     return typeid(executor_);
   }
 
-  virtual any_none_sender<> make_bulk_value_task(
-    any_none_sender<> from, 
+  virtual any_sender<> make_bulk_value_task(
+    any_sender<> from, 
     function<void(size_t, shared_ptr<void>&)> f,
     size_t n,
     function<shared_ptr<void>()> sf)
@@ -361,7 +361,7 @@ public:
   {
     // All valid Executors are single senders that send themselves (or a subexecutor)
     // in the value channel.
-    static_assert((bool) execution::Sender<Executor, execution::sender_t::single_t>);
+    static_assert((bool) execution::Sender<Executor>);
     auto e2 = execution::require(std::move(e), bulk_oneway);
     impl_ = new bulk_oneway_executor_impl::impl<decltype(e2), SupportableProperties...>(std::move(e2));
   }
@@ -494,7 +494,7 @@ public:
 
   // All executors are single senders that forward themselves (or a subexecutor)
   // through the value channel.
-  static constexpr sender_t::single_t query(sender_t) noexcept { return sender.single; }
+  static constexpr void query(sender_t) noexcept {}
 
   template<class Function, class SharedFactory>
   void execute(Function f, std::size_t n, SharedFactory sf) const
@@ -534,7 +534,7 @@ public:
   // TODO: This should type-erase the receiver and pass it through to
   // the wrapped executor's submit, but we haven't implemented type-erased
   // receivers yet.
-  template<SingleReceiver<polymorphic_executor_type&> To>
+  template<ReceiverOf<exception_ptr, polymorphic_executor_type&> To>
   void submit(To to)
   {
     set_value(to, *this);

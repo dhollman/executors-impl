@@ -50,11 +50,9 @@ private:
       From from_;
       Function f_;
       adapter this_;
-      static constexpr auto query(sender_t)
-      {
-        return sender.none;
-      }
-      template <NoneReceiver To>
+      static constexpr void query(sender_t)
+      {}
+      template <ReceiverOf<exception_ptr> To>
       void submit(To to)
       {
         struct __receiver
@@ -63,10 +61,8 @@ private:
           Function f_;
           To to_;
           Executor exec_;
-          static constexpr auto query(execution::receiver_t)
-          {
-            return execution::receiver.none;
-          }
+          static constexpr void query(execution::receiver_t)
+          {}
           void set_error(std::exception_ptr e)
           {
             execution::set_error(to_, e);
@@ -78,11 +74,13 @@ private:
           void set_value()
           {
             exec_.submit(
-              single_receiver{
-                [p = std::move(p_), f = std::move(f_)](Executor) mutable
-                {
-                  f();
-                  p.set_value();
+              receiver{
+                on_value{
+                  [p = std::move(p_), f = std::move(f_)](Executor) mutable
+                  {
+                    f();
+                    p.set_value();
+                  }
                 }
               }
             );
@@ -173,7 +171,7 @@ private:
       return future;
     }
 
-    template <SingleReceiver<adapter&> To>
+    template <ReceiverOf<exception_ptr, adapter&> To>
     void submit(To to)
     {
       set_value((To&&) to, *this);
