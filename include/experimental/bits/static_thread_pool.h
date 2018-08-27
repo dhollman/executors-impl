@@ -87,7 +87,8 @@ class static_thread_pool
     static constexpr execution::mapping_t query(execution::mapping_t) { return execution::mapping.thread; }
 
     // This is a single sender.
-    static constexpr void query(execution::sender_t) {}
+    static constexpr execution::sender_desc<exception_ptr, executor_impl&> query(execution::sender_t)
+    { return {}; }
 
     // Allocator.
     executor_impl<Interface, Blocking, Continuation, Work, std::allocator<void>>
@@ -135,8 +136,8 @@ class static_thread_pool
       From from_;
       Function f_;
       executor_impl this_;
-      static constexpr void query(execution::sender_t)
-      {}
+      static constexpr execution::sender_desc<> query(execution::sender_t)
+      { return {}; }
       template <execution::ReceiverOf<exception_ptr> To>
       void submit(To to)
       {
@@ -189,13 +190,17 @@ class static_thread_pool
                Invocable<Function&, size_t, invoke_result_t<SharedFactory&>&>
     struct __bulk_sender
     {
+      using sender_desc_t =
+          execution::sender_desc<
+              typename execution::sender_traits<From>::error_type
+          >;
       From from_;
       Function f_;
       size_t n_;
       SharedFactory sf_;
       executor_impl this_;
-      static constexpr void query(execution::sender_t)
-      {}
+      static constexpr sender_desc_t query(execution::sender_t)
+      { return {}; }
       template <execution::Receiver To>
       struct __receiver
       {
@@ -231,7 +236,7 @@ class static_thread_pool
               f(m, s.second);
               // If we had a bulk reduce function, we could drop the atomic here.
               if (0 == --atomic_ref<size_t>(s.first))
-                execution::set_done(to);
+                execution::set_value(to); // BUGBUG support twoway and then.
             },
             n_,
             [sf = std::move(sf_), n = n_]() mutable
@@ -270,7 +275,7 @@ class static_thread_pool
     template <execution::ReceiverOf<exception_ptr, executor_impl&> To>
     void submit(To to)
     {
-      set_value(to, *this);
+      execution::set_value(to, *this);
     }
     executor_impl executor() const
     {

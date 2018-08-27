@@ -52,10 +52,12 @@ void static_thread_pool_oneway_executor_compile_test(Executor ex1)
   cex1.make_value_task(
     execution::sender
     {
-      [](auto to) -> std::enable_if_t<(bool)execution::Receiver<decltype(to)>>
-      {
-        execution::set_done(to);
-      }
+      execution::on_submit<>(
+        [](auto to) -> std::enable_if_t<(bool)execution::Receiver<decltype(to)>>
+        {
+          execution::set_done(to);
+        }
+      )
     }, []{}
   ).submit(execution::receiver{});
 

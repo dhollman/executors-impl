@@ -7,6 +7,7 @@
 #include <experimental/bits/is_interface_property.h>
 #include <memory>
 #include <utility>
+#include <any>
 
 namespace std {
 namespace experimental {
@@ -138,8 +139,9 @@ struct impl_base
   virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
   virtual void execute(std::unique_ptr<bulk_func_base> f, std::size_t n, std::shared_ptr<shared_factory_base> sf) = 0;
-  virtual any_sender<any_receiver<>> make_bulk_value_task(
-      any_sender<any_receiver<>>, function<void(size_t, shared_ptr<void>&)>, size_t, function<shared_ptr<void>()>) = 0;
+  virtual any_sender<> make_bulk_value_task(
+      any_sender<>, function<void(size_t, any&)>, size_t, function<any()>) = 0;
+  virtual void submit(any_receiver<exception_ptr, any_sender<exception_ptr, _self>>) = 0;
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
   virtual const void* target() const = 0;
@@ -183,13 +185,27 @@ struct impl : impl_base
     return typeid(executor_);
   }
 
-  virtual any_sender<any_receiver<>> make_bulk_value_task(
-    any_sender<any_receiver<>> from,
-    function<void(size_t, shared_ptr<void>&)> f,
+  virtual any_sender<> make_bulk_value_task(
+    any_sender<> from,
+    function<void(size_t, any&)> f,
     size_t n,
-    function<shared_ptr<void>()> sf)
+    function<any()> sf)
   {
     return executor_.make_bulk_value_task(std::move(from), std::move(f), n, std::move(sf));
+  }
+
+  virtual void submit(any_receiver<exception_ptr, any_sender<exception_ptr, _self>> to)
+  {
+    executor_.submit(
+      execution::receiver{
+        execution::on_value{
+          [to = std::move(to)](auto ex) mutable
+          {
+            execution::set_value(to, any_sender<exception_ptr, _self>{std::move(ex)});
+          }
+        }
+      }
+    );
   }
 
   virtual void* target()
@@ -495,25 +511,8 @@ public:
 
   // All executors are single senders that forward themselves (or a subexecutor)
   // through the value channel.
-  static constexpr void query(sender_t) noexcept {}
-
-  template<class Function, class SharedFactory>
-  void execute(Function f, std::size_t n, SharedFactory sf) const
-  {
-    auto f_wrap = [f = std::move(f)](std::size_t i, std::shared_ptr<void>& ss) mutable
-    {
-      f(i, *std::static_pointer_cast<decltype(sf())>(ss));
-    };
-
-    auto sf_wrap = [sf = std::move(sf)]() mutable
-    {
-      return std::make_shared<decltype(sf())>(sf());
-    };
-
-    std::unique_ptr<bulk_oneway_executor_impl::bulk_func_base> fp(new bulk_oneway_executor_impl::bulk_func<decltype(f_wrap)>(std::move(f_wrap)));
-    std::shared_ptr<bulk_oneway_executor_impl::shared_factory_base> sfp(new bulk_oneway_executor_impl::shared_factory<decltype(sf_wrap)>(std::move(sf_wrap)));
-    impl_ ? impl_->execute(std::move(fp), n, std::move(sfp)) : throw bad_executor();
-  }
+  static constexpr sender_desc<exception_ptr, any_sender<exception_ptr, _self>> query(sender_t) noexcept
+  { return {}; }
 
   template<Sender From, class Function, class SharedFactory>
     requires Invocable<SharedFactory&> &&
@@ -522,23 +521,20 @@ public:
   {
     return impl_ ? impl_->make_bulk_value_task(
       std::move(from),
-      [f = std::move(f)](size_t m, shared_ptr<void>& s) mutable {
-        f(m, *static_cast<invoke_result_t<SharedFactory&>*>(s.get()));
+      [f = std::move(f)](size_t m, any& s) mutable {
+        f(m, *any_cast<invoke_result_t<SharedFactory&>>(&s));
       },
       n,
-      [sf = std::move(sf)]() mutable -> shared_ptr<void> {
-        return make_shared<invoke_result_t<SharedFactory&>>(sf());
+      [sf = std::move(sf)]() mutable -> any {
+        return sf();
       }
     ) : throw bad_executor();
   }
 
-  // TODO: This should type-erase the receiver and pass it through to
-  // the wrapped executor's submit, but we haven't implemented type-erased
-  // receivers yet.
-  template<ReceiverOf<exception_ptr, polymorphic_executor_type&> To>
+  template<ReceiverOf<exception_ptr, any_sender<exception_ptr, _self>> To>
   void submit(To to)
   {
-    set_value(to, *this);
+    return impl_ ? impl_->submit(std::move(to)) : throw bad_executor();
   }
 
   // polymorphic executor capacity:

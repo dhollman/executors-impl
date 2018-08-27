@@ -2,6 +2,8 @@
 #define STD_EXPERIMENTAL_BITS_IS_BULK_ONEWAY_EXECUTOR_H
 
 #include <experimental/bits/is_executor.h>
+#include <experimental/bits/require.h>
+#include <experimental/bits/sender_receiver.h>// BUGBUG for Invocable
 
 namespace std {
 namespace experimental {
@@ -21,21 +23,12 @@ struct bulk_function
   void operator()(std::size_t, shared_state&) {}
 };
 
-template<class T, class = std::void_t<>>
+template<class T>
 struct eval : std::false_type {};
 
 template<class T>
-struct eval<T,
-  std::void_t<
-    typename std::enable_if<std::is_same<void, decltype(std::declval<const T&>().execute(
-          std::declval<bulk_function>(), 1, std::declval<shared_factory>()))>::value>::type,
-    typename std::enable_if<std::is_same<void, decltype(std::declval<const T&>().execute(
-          std::declval<bulk_function&>(), 1, std::declval<shared_factory>()))>::value>::type,
-    typename std::enable_if<std::is_same<void, decltype(std::declval<const T&>().execute(
-          std::declval<const bulk_function&>(), 1, std::declval<shared_factory>()))>::value>::type,
-    typename std::enable_if<std::is_same<void, decltype(std::declval<const T&>().execute(
-          std::declval<bulk_function&&>(), 1, std::declval<shared_factory>()))>::value>::type
-	>> : is_executor_impl::eval<T> {};
+  requires Same<T, invoke_result_t<require_impl::require_fn, T&, bulk_oneway_t>>
+struct eval<T> : is_executor_impl::eval<T> {};
 
 } // namespace is_bulk_oneway_executor_impl
 

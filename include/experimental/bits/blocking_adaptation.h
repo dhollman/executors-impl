@@ -47,6 +47,8 @@ private:
       From from_;
       Function f_;
       adapter this_;
+      static constexpr execution::__transform_sender_desc_t<From, Function&> query(sender_t)
+      { return {}; }
       template <Receiver To>
       struct __receiver
       {
@@ -70,13 +72,14 @@ private:
           execution::set_done(to_);
         }
         template <class... Ts>
-        void set_value(Ts&&... ts) requires Invocable<__composed_fn, Ts...>
+          requires Invocable<__composed_fn, Ts...>
+        void set_value(Ts&&... ts)
         {
           execution::submit(
             exec_,
             receiver{
-                // make_tuple? Or forward lvalue references?
               on_value{
+                // make_tuple? Or forward lvalue references?
                 [f = std::move(f_), to = std::move(to_), args = std::make_tuple((Ts&&) ts...)](auto) mutable
                 {
                   // Roughly: set_value(to, f(ts...))
@@ -90,8 +93,6 @@ private:
           );
         }
       };
-      static constexpr void query(sender_t)
-      {}
       template <Receiver To>
         requires SenderTo<From, __receiver<To>>
       void submit(To to)

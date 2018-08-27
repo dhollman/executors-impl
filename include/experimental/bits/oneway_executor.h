@@ -139,7 +139,8 @@ struct impl_base
   virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
   virtual void execute(std::unique_ptr<oneway_func_base> f) = 0;
-  virtual any_sender<any_receiver<>> make_value_task(any_sender<any_receiver<>>, function<void()> f) = 0;
+  virtual any_sender<> make_value_task(any_sender<>, function<void()> f) = 0;
+  virtual void submit(any_receiver<exception_ptr, any_sender<exception_ptr, _self>>) = 0;
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
   virtual const void* target() const = 0;
@@ -176,10 +177,24 @@ struct impl : impl_base
     executor_.execute([f = std::move(f)]() mutable { f.release()->call(); });
   }
 
-  virtual any_sender<any_receiver<>> make_value_task(
-      any_sender<any_receiver<>> from, function<void()> f)
+  virtual any_sender<> make_value_task(
+      any_sender<> from, function<void()> f)
   {
     return executor_.make_value_task(from, std::move(f));
+  }
+
+  virtual void submit(any_receiver<exception_ptr, any_sender<exception_ptr, _self>> to)
+  {
+    executor_.submit(
+      execution::receiver{
+        execution::on_value{
+          [to = std::move(to)](auto ex) mutable
+          {
+            execution::set_value(to, any_sender<exception_ptr, _self>{std::move(ex)});
+          }
+        }
+      }
+    );
   }
 
   virtual const type_info& target_type() const
@@ -490,7 +505,8 @@ public:
 
   // All executors are single senders that forward themselves (or a subexecutor)
   // through the value channel.
-  static constexpr void query(sender_t) noexcept {}
+  static constexpr sender_desc<exception_ptr, any_sender<exception_ptr, _self>> query(sender_t) noexcept
+  { return {}; }
 
   template<class Function>
   void execute(Function f) const
@@ -506,13 +522,10 @@ public:
     return impl_ ? impl_->make_value_task(std::move(from), std::move(f)) : throw bad_executor();
   }
 
-  // TODO: This should type-erase the receiver and pass it through to
-  // the wrapped executor's submit, but we haven't implemented type-erased
-  // receivers yet.
-  template<ReceiverOf<exception_ptr, polymorphic_executor_type&> To>
+  template<ReceiverOf<exception_ptr, any_sender<exception_ptr, _self>> To>
   void submit(To to)
   {
-    set_value(to, *this);
+    return impl_ ? impl_->submit(std::move(to)) : throw bad_executor();
   }
 
   // polymorphic executor capacity:
