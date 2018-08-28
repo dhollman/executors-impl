@@ -139,7 +139,8 @@ struct impl_base
   virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
   virtual void execute(std::unique_ptr<oneway_func_base> f) = 0;
-  virtual any_sender<> make_value_task(any_sender<>, function<void()> f) = 0;
+  virtual any_sender<exception_ptr, any> make_value_task(
+      any_sender<exception_ptr, any>, function<any(any)> f) = 0;
   virtual void submit(any_receiver<exception_ptr, any_sender<exception_ptr, _self>>) = 0;
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
@@ -177,24 +178,15 @@ struct impl : impl_base
     executor_.execute([f = std::move(f)]() mutable { f.release()->call(); });
   }
 
-  virtual any_sender<> make_value_task(
-      any_sender<> from, function<void()> f)
+  virtual any_sender<exception_ptr, any> make_value_task(
+      any_sender<exception_ptr, any> from, function<any(any)> f)
   {
     return executor_.make_value_task(from, std::move(f));
   }
 
   virtual void submit(any_receiver<exception_ptr, any_sender<exception_ptr, _self>> to)
   {
-    executor_.submit(
-      execution::receiver{
-        execution::on_value{
-          [to = std::move(to)](auto ex) mutable
-          {
-            execution::set_value(to, any_sender<exception_ptr, _self>{std::move(ex)});
-          }
-        }
-      }
-    );
+    executor_.submit(std::move(to));
   }
 
   virtual const type_info& target_type() const
@@ -516,10 +508,34 @@ public:
   }
 
   template<Sender From, class Function>
-    requires Invocable<Function&>
-  auto make_value_task(From from, Function f) const -> Sender
+    requires ValuesTransform<Function&, From>
+  auto make_value_task(From from, Function fun) const -> Sender
   {
-    return impl_ ? impl_->make_value_task(std::move(from), std::move(f)) : throw bad_executor();
+    using args_t = typename sender_traits<From>::template value_types<std::tuple>;
+    using result_t = __values_transform_result_t<From, Function&>;
+    if (!impl_)
+      throw bad_executor();
+    auto from2 = impl_->make_value_task(
+        transform_sender
+        {
+            std::move(from),
+            [](auto&&... args)
+            {
+                return any(in_place_type<args_t>, (decltype(args)&&) args...);
+            }
+        },
+        [fun = std::move(fun)](any v) mutable -> any
+        {
+            if constexpr (is_void_v<__values_transform_result_t<From, Function&>>)
+                return std::apply(fun, *any_cast<args_t>(&v)), any{};
+            else
+                return std::apply(fun, *any_cast<args_t>(&v));
+        }
+    );
+    if constexpr (is_void_v<result_t>)
+      return transform_sender{std::move(from2), [](any) {}};
+    else
+      return transform_sender{std::move(from2), [](any v) { return *any_cast<result_t>(&v); }};
   }
 
   template<ReceiverOf<exception_ptr, any_sender<exception_ptr, _self>> To>

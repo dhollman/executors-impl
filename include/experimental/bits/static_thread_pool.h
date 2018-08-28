@@ -130,46 +130,59 @@ class static_thread_pool
     }
 
     template <execution::Sender From, class Function>
-      requires Invocable<Function&>
-    struct __oneway_sender
+      requires execution::ValuesTransform<Function&, From>
+    struct __sender
     {
       From from_;
       Function f_;
       executor_impl this_;
-      static constexpr execution::sender_desc<> query(execution::sender_t)
+      static constexpr execution::__transform_sender_desc_t<From, Function&> query(execution::sender_t)
       { return {}; }
-      template <execution::ReceiverOf<exception_ptr> To>
+      template <execution::Receiver To>
+      struct __receiver
+      {
+        Function f_;
+        To to_;
+        static_thread_pool* pool_;
+        ProtoAllocator allocator_;
+        using __composed_fn =
+          execution::__compose_result_t<
+            execution::__binder1st<execution::set_value_fn, To&>,
+            Function&>;
+        static constexpr void query(execution::receiver_t)
+        {}
+        template <class E>
+          requires Invocable<execution::set_error_fn const&, To&, E>
+        void set_error(E&& e)
+        {
+          execution::set_error(to_, (E&&) e);
+        }
+        void set_done()
+        {
+          execution::set_done(to_);
+        }
+        template <class... Args>
+          requires Invocable<__composed_fn, Args...>
+        void set_value(Args&&... args)
+        {
+          pool_->execute(Blocking{}, Continuation{}, allocator_,
+            [f = std::move(f_), to = std::move(to_), args = std::make_tuple((Args&&) args...)]() mutable
+            {
+              std::apply(
+                execution::__compose(execution::__bind1st(execution::set_value, std::ref(to)), std::move(f)),
+                std::move(args)
+              );
+            }
+          );
+        }
+      };
+      template <execution::Receiver To>
+        requires execution::SenderTo<From, __receiver<To>>
       void submit(To to)
       {
-        struct __receiver
-        {
-          Function f_;
-          To to_;
-          static_thread_pool* pool_;
-          ProtoAllocator allocator_;
-          static constexpr void query(execution::receiver_t)
-          {}
-          void set_error(std::exception_ptr e)
-          {
-            execution::set_error(to_, e);
-          }
-          void set_done()
-          {
-            execution::set_done(to_);
-          }
-          void set_value()
-          {
-            pool_->execute(Blocking{}, Continuation{}, allocator_,
-              [f = std::move(f_), to = std::move(to_)]() mutable
-              {
-                f();
-                execution::set_value(to);
-              }
-            );
-          }
-        };
-        from_.submit(
-          __receiver{std::move(f_), std::move(to), this_.pool_, this_.allocator_}
+        execution::submit(
+          from_,
+          __receiver<To>{std::move(f_), std::move(to), this_.pool_, this_.allocator_}
         );
       }
       executor_impl executor() const
@@ -179,34 +192,48 @@ class static_thread_pool
     };
 
     template <execution::Sender From, class Function>
-      requires Invocable<Function&> && Same<Interface, execution::oneway_t>
+      requires execution::ValuesTransform<Function&, From> &&
+               Same<Interface, execution::oneway_t>
     auto make_value_task(From from, Function f) const -> execution::Sender
     {
-      return __oneway_sender<From, Function>{std::move(from), std::move(f), *this};
+      return __sender<From, Function>{std::move(from), std::move(f), *this};
     }
 
-    template <execution::Sender From, class Function, class SharedFactory>
-      requires Invocable<SharedFactory&> &&
-               Invocable<Function&, size_t, invoke_result_t<SharedFactory&>&>
+    template <execution::Sender From, class Function, class SF, class RF>
+      requires Invocable<SF&> &&
+               execution::ValuesTransform<
+                 execution::__binder1st<
+                   execution::__bulk_invoke<Function, invoke_result_t<RF&>, invoke_result_t<SF&>>,
+                   size_t
+                 >,
+                 From
+               >
     struct __bulk_sender
     {
+      using r_t = invoke_result_t<RF&>;
+      using s_t = invoke_result_t<SF&>;
+      using bulk_fn_t =
+        execution::__binder1st<
+          execution::__bulk_invoke<Function, r_t, s_t>,
+          size_t
+        >;
       using sender_desc_t =
-          execution::sender_desc<
-              typename execution::sender_traits<From>::error_type
-          >;
+        execution::__transform_sender_desc_t<From, bulk_fn_t>;
       From from_;
       Function f_;
       size_t n_;
-      SharedFactory sf_;
+      SF sf_;
+      RF rf_;
       executor_impl this_;
-      static constexpr sender_desc_t query(execution::sender_t)
+      static constexpr sender_desc_t query(execution::sender_t) noexcept
       { return {}; }
       template <execution::Receiver To>
       struct __receiver
       {
         Function f_;
         size_t n_;
-        SharedFactory sf_;
+        SF sf_;
+        RF rf_;
         To to_;
         static_thread_pool* pool_;
         ProtoAllocator allocator_;
@@ -222,26 +249,46 @@ class static_thread_pool
         {
           execution::set_done(to_);
         }
-        // using __composed_fn =
-        //     __compose_result_t<
-        //       __binder1st<execution::set_value_fn, To&>,
+        using __composed_fn =
+            execution::__compose_result_t<
+              execution::__binder1st<execution::set_value_fn, To&>,
+              bulk_fn_t
+            >;
         template <class... Ts>
-          //requires Invocable TODO constrain this properly!
+          requires Invocable<__composed_fn, Ts...>
         void set_value(Ts&&... ts)
         {
+          using rf_result_t = conditional_t<is_void_v<r_t>, int, r_t>;
           pool_->bulk_execute(Blocking{}, Continuation{}, allocator_,
             [f = std::move(f_), n = n_, to = std::move(to_), args = make_tuple((Ts&&) ts...)](
-                size_t m, pair<size_t, invoke_result_t<SharedFactory&>>& s) mutable
+                size_t m, tuple<size_t, rf_result_t, s_t>& s) mutable
             {
-              f(m, s.second);
-              // If we had a bulk reduce function, we could drop the atomic here.
-              if (0 == --atomic_ref<size_t>(s.first))
-                execution::set_value(to); // BUGBUG support twoway and then.
+              execution::__compose(
+                [&](auto&&...args)
+                {
+                  // If we had a bulk reduce function, we could drop the atomic here.
+                  if (0 == --atomic_ref<size_t>(get<0>(s)))
+                    execution::set_value(to, (decltype(args)&&) args...);
+                },
+                [&]()
+                {
+                  return std::apply(
+                    execution::__bind1st(
+                      execution::__bulk_invoke<Function, r_t, s_t>{f, get<1>(s), get<2>(s)},
+                      m
+                    ),
+                    std::move(args)
+                  );
+                }
+              )();
             },
             n_,
-            [sf = std::move(sf_), n = n_]() mutable
+            [sf = std::move(sf_), rf = std::move(rf_), n = n_]() mutable
             {
-              return std::make_pair(n, sf());
+              if constexpr (is_void_v<invoke_result_t<RF&>>)
+                return rf(), std::make_tuple(n, 0, sf());
+              else
+                return std::make_tuple(n, rf(), sf());
             }
           );
         }
@@ -252,7 +299,7 @@ class static_thread_pool
       {
         execution::submit(
           from_,
-          __receiver<To>{std::move(f_), n_, std::move(sf_), std::move(to), this_.pool_, this_.allocator_}
+          __receiver<To>{std::move(f_), n_, std::move(sf_), std::move(rf_), std::move(to), this_.pool_, this_.allocator_}
         );
       }
       executor_impl executor() const
@@ -261,15 +308,21 @@ class static_thread_pool
       }
     };
 
-    template <execution::Sender From, class Function, class SharedFactory>
-      requires Invocable<SharedFactory&> &&
-               Invocable<Function&, size_t, invoke_result_t<SharedFactory&>&> &&
+    template <execution::Sender From, class Function, class SF, class RF>
+      requires Invocable<SF&> && Invocable<RF&> &&
+               execution::ValuesTransform<
+                 execution::__binder1st<
+                   execution::__bulk_invoke<Function, invoke_result_t<RF&>, invoke_result_t<SF&>>,
+                   size_t
+                 >,
+                 From
+               > &&
                Same<Interface, execution::bulk_oneway_t>
     execution::Sender make_bulk_value_task(
-        From from, Function f, std::size_t n, SharedFactory sf) const
+        From from, Function f, std::size_t n, SF sf, RF rf) const
     {
-      return __bulk_sender<From, Function, SharedFactory>{
-        std::move(from), std::move(f), n, std::move(sf), *this};
+      return __bulk_sender<From, Function, SF, RF>{
+        std::move(from), std::move(f), n, std::move(sf), std::move(rf), *this};
     }
 
     template <execution::ReceiverOf<exception_ptr, executor_impl&> To>

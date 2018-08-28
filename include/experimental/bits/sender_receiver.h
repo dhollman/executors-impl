@@ -6,6 +6,7 @@
 #include <type_traits>
 #include <memory>
 #include <future>
+#include <any>
 
 #include <experimental/bits/query.h>
 
@@ -202,26 +203,16 @@ struct __fn
 }
 inline constexpr struct get_executor_fn : __get_executor::__fn {} const get_executor {};
 
-template <_Sender From>
-struct sender_traits : invoke_result_t<query_impl::query_fn const&, From&, sender_t>
-{};
-
-template <class E>
-struct with_error
-{
-    using error_type = E;
-};
-
-template <class... Args>
-struct with_values
-{
-    template <template <class...> class List>
-    using value_types = List<Args...>;
-};
-
 template <class From>
 concept bool Sender =
     _Sender<From> && Invocable<get_executor_fn const&, From&>;
+
+template <Sender From>
+using sender_desc_t = invoke_result_t<query_impl::query_fn const&, From&, sender_t>;
+
+template <Sender From>
+struct sender_traits : sender_desc_t<From>
+{};
 
 inline constexpr struct submit_fn
 {
@@ -428,7 +419,7 @@ public:
       : on_submit_(std::move(on_submit)), on_executor_(std::move(on_executor))
     {}
     static constexpr typename OnSubmit::sender_desc_t query(sender_t) noexcept
-    {}
+    { return {}; }
     template <Receiver To>
       requires Invocable<OnSubmit&, To>
     void submit(To to)
@@ -442,10 +433,6 @@ public:
 };
 
 sender() -> sender<__noop_submit>;
-template <class OnSubmit>
-sender(OnSubmit) -> sender<OnSubmit>;
-template <class OnSubmit, class OnExecutor>
-sender(OnSubmit, OnExecutor) -> sender<OnSubmit, OnExecutor>;
 
 template <class Derived>
 struct __cloneable
@@ -577,7 +564,6 @@ public:
     { return {}; }
     void submit(receiver_type to) { impl_->submit(std::move(to)); }
 };
-
 
 
 // template <class Adapt, class From>
@@ -719,25 +705,118 @@ struct __meta_bind_front
     using __result = T<Front..., Back...>;
 };
 
-template <Sender From>
-using sender_desc_t = invoke_result_t<query_impl::query_fn const&, From&, sender_t>;
-
 template <Sender From, class Function>
+using __values_transform_result_t =
+    typename sender_traits<From>::template value_types<
+        __meta_bind_front<invoke_result_t, Function>::template __result
+    >;
+
+template <class Function, class From>
+concept bool ValuesTransform =
+    Sender<From> && requires
+    {
+        typename __values_transform_result_t<From, Function>;
+    };
+
+template <Sender From, ValuesTransform<From> Function>
 using __transform_sender_desc_t =
     conditional_t<
-        is_void_v<
-            typename sender_desc_t<From>::template value_types<
-                __meta_bind_front<invoke_result_t, Function>::template __result
-            >
-        >,
-        sender_desc<typename sender_desc_t<From>::error_type>,
+        is_void_v<__values_transform_result_t<From, Function>>,
+        sender_desc<typename sender_traits<From>::error_type>,
         sender_desc<
-            typename sender_desc_t<From>::error_type,
-            typename sender_desc_t<From>::template value_types<
-                __meta_bind_front<invoke_result_t, Function>::template __result
-            >
+            typename sender_traits<From>::error_type,
+            __values_transform_result_t<From, Function>
         >
     >;
+
+template <Sender From, class Function>
+  requires ValuesTransform<Function&, From>
+struct transform_sender
+{
+private:
+    From from_{};
+    Function fun_{};
+    template <Receiver To>
+    struct __receiver
+    {
+        To to_;
+        Function fun_;
+        using __composed_fn =
+            __compose_result_t<__binder1st<set_value_fn, To&>, Function>;
+        static constexpr void query(receiver_t) noexcept {}
+        void set_done() { execution::set_done(to_); }
+        template <class E>
+          requires Invocable<execution::set_error_fn const&, To&, E>
+        void set_error(E&& e)
+        {
+            execution::set_error(to_, (E&&) e);
+        }
+        template <class...Args>
+          requires Invocable<__composed_fn, Args...>
+        void set_value(Args&&... args)
+        {
+            __compose(
+                __bind1st(execution::set_value, std::ref(to_)),
+                std::move(fun_)
+            )((Args&&) args...);
+        }
+    };
+public:
+    transform_sender() = default;
+    transform_sender(From from, Function fun)
+      : from_(std::move(from)), fun_(std::move(fun))
+    {}
+    static constexpr __transform_sender_desc_t<From, Function&> query(sender_t) noexcept
+    { return {}; }
+    template <Receiver To>
+      requires SenderTo<From, __receiver<To>>
+    void submit(To to)
+    {
+        execution::submit(
+            from_,
+            __receiver<To>{std::move(to), std::move(fun_)}
+        );
+    }
+};
+
+template <class Function, class R, class S>
+struct __bulk_invoke
+{
+    Function* fun_;
+    R* r_;
+    S* s_;
+    __bulk_invoke(Function& fun, R& r, S& s)
+      : fun_(&fun), r_(&r), s_(&s)
+    {}
+    __bulk_invoke(Function& fun, any& r, any& s, int)
+      : __bulk_invoke{fun, *any_cast<R>(&r), *any_cast<S>(&s)}
+    {}
+    template <class... Args>
+      requires Invocable<Function&, size_t, Args..., R&, S&>
+    decltype(auto) operator()(size_t n, Args&&... args)
+    {
+        return std::invoke(*fun_, n, (Args&&) args..., *r_, *s_);
+    }
+};
+
+template <class Function, class S>
+struct __bulk_invoke<Function, void, S>
+{
+    Function* fun_;
+    S* s_;
+    __bulk_invoke(Function& fun, __ignore, S& s)
+      : fun_(&fun), s_(&s)
+    {}
+    __bulk_invoke(Function& fun, any&, any& s, int)
+      : __bulk_invoke{fun, 0, *any_cast<S>(&s)}
+    {}
+    template <class... Args>
+      requires Invocable<Function&, size_t, Args..., S&>
+    decltype(auto) operator()(size_t n, Args&&... args)
+    {
+        return std::invoke(*fun_, n, (Args&&) args..., *s_);
+    }
+};
 
 } // namespace execution
 } // inline namespace executors_v1

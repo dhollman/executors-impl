@@ -139,8 +139,8 @@ struct impl_base
   virtual impl_base* clone() const noexcept = 0;
   virtual void destroy() noexcept = 0;
   virtual void execute(std::unique_ptr<bulk_func_base> f, std::size_t n, std::shared_ptr<shared_factory_base> sf) = 0;
-  virtual any_sender<> make_bulk_value_task(
-      any_sender<>, function<void(size_t, any&)>, size_t, function<any()>) = 0;
+  virtual any_sender<exception_ptr, any> make_bulk_value_task(
+      any_sender<exception_ptr, any>, function<any(size_t, any, any&, any&)>, size_t, function<any()>, function<any()>) = 0;
   virtual void submit(any_receiver<exception_ptr, any_sender<exception_ptr, _self>>) = 0;
   virtual const type_info& target_type() const = 0;
   virtual void* target() = 0;
@@ -185,27 +185,19 @@ struct impl : impl_base
     return typeid(executor_);
   }
 
-  virtual any_sender<> make_bulk_value_task(
-    any_sender<> from,
-    function<void(size_t, any&)> f,
+  virtual any_sender<exception_ptr, any> make_bulk_value_task(
+    any_sender<exception_ptr, any> from,
+    function<any(size_t, any, any&, any&)> f,
     size_t n,
-    function<any()> sf)
+    function<any()> sf,
+    function<any()> rf)
   {
-    return executor_.make_bulk_value_task(std::move(from), std::move(f), n, std::move(sf));
+    return executor_.make_bulk_value_task(std::move(from), std::move(f), n, std::move(sf), std::move(rf));
   }
 
   virtual void submit(any_receiver<exception_ptr, any_sender<exception_ptr, _self>> to)
   {
-    executor_.submit(
-      execution::receiver{
-        execution::on_value{
-          [to = std::move(to)](auto ex) mutable
-          {
-            execution::set_value(to, any_sender<exception_ptr, _self>{std::move(ex)});
-          }
-        }
-      }
-    );
+    execution::submit(executor_, std::move(to));
   }
 
   virtual void* target()
@@ -514,21 +506,56 @@ public:
   static constexpr sender_desc<exception_ptr, any_sender<exception_ptr, _self>> query(sender_t) noexcept
   { return {}; }
 
-  template<Sender From, class Function, class SharedFactory>
-    requires Invocable<SharedFactory&> &&
-             Invocable<Function&, size_t, invoke_result_t<SharedFactory&>&>
-  auto make_bulk_value_task(From from, Function f, std::size_t n, SharedFactory sf) const -> Sender
+  template<Sender From, class Function, class SF, class RF>
+    requires Invocable<SF&> && Invocable<RF&> &&
+             ValuesTransform<
+                __binder1st<
+                  __bulk_invoke<Function, invoke_result_t<RF&>, invoke_result_t<SF&>>,
+                  size_t
+                >,
+                From
+              >
+  auto make_bulk_value_task(From from, Function f, std::size_t n, SF sf, RF rf) const -> Sender
   {
-    return impl_ ? impl_->make_bulk_value_task(
-      std::move(from),
-      [f = std::move(f)](size_t m, any& s) mutable {
-        f(m, *any_cast<invoke_result_t<SharedFactory&>>(&s));
+    using args_t = typename sender_traits<From>::template value_types<std::tuple>;
+    using s_t = invoke_result_t<SF&>;
+    using r_t = invoke_result_t<RF&>;
+    using result_t = __values_transform_result_t<From, __binder1st<__bulk_invoke<Function, r_t, s_t>, size_t>>;
+    if (!impl_)
+      throw bad_executor();
+    auto from2 = impl_->make_bulk_value_task(
+      transform_sender
+      {
+        std::move(from),
+        [](auto&&... args) { return any{in_place_type<args_t>, (decltype(args)&&) args...}; }
+      },
+      [f = std::move(f)](size_t m, any args, any& r, any& s) mutable -> any {
+        if constexpr (is_void_v<result_t>)
+          return std::apply(
+            __bind1st(__bulk_invoke<Function, r_t, s_t>{f, r, s, 0}, m),
+            *any_cast<args_t>(&args)
+          ), any{};
+        else
+          return std::apply(
+            __bind1st(__bulk_invoke<Function, r_t, s_t>{f, r, s, 0}, m),
+            *any_cast<args_t>(&args)
+          );
       },
       n,
       [sf = std::move(sf)]() mutable -> any {
         return sf();
+      },
+      [rf = std::move(rf)]() mutable -> any {
+        if constexpr (is_void_v<r_t>)
+          return rf(), any{};
+        else
+          return rf();
       }
-    ) : throw bad_executor();
+    );
+    if constexpr (is_void_v<result_t>)
+      return transform_sender{std::move(from2), [](any) {}};
+    else
+      return transform_sender{std::move(from2), [](any v) { return *any_cast<result_t>(&v); }};
   }
 
   template<ReceiverOf<exception_ptr, any_sender<exception_ptr, _self>> To>

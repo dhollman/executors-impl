@@ -108,52 +108,16 @@ private:
   public:
     using impl::enumerator_adapter<adapter, Executor, blocking_t, always_t>::enumerator_adapter;
 
-    // template<class Function> auto execute(Function f) const
-    //   -> decltype(inner_declval<Function>().execute(std::move(f)))
-    // {
-    //   promise<void> promise;
-    //   future<void> future = promise.get_future();
-    //   this->executor_.execute([f = std::move(f), p = std::move(promise)]() mutable { f(); });
-    //   future.wait();
-    // }
-    template<class Function, Sender From>
-      requires requires { typename execution::__transform_sender_desc_t<From, Function>; }
+    template<Sender From, class Function>
+      requires ValuesTransform<Function&, From>
     auto make_value_task(From from, Function f) const -> Sender
     {
       // If `From` sends arguments `Args...` through the value channel, then
       // `value_t` is `invoke_result_t<Function&, Args...>`:
-      using value_t = typename execution::sender_traits<From>::template value_types<
-          execution::__meta_bind_front<invoke_result_t, Function&>::template __result>;
+      using value_t = typename sender_traits<From>::template value_types<
+          __meta_bind_front<invoke_result_t, Function&>::template __result>;
       return __sender<From, Function, value_t>{std::move(from), std::move(f), *this};
     }
-
-    // template<class Function>
-    // auto twoway_execute(Function f) const
-    //   -> decltype(inner_declval<Function>().twoway_execute(std::move(f)))
-    // {
-    //   auto future = this->executor_.twoway_execute(std::move(f));
-    //   future.wait();
-    //   return future;
-    // }
-
-    // template<class Function, class SharedFactory>
-    // auto bulk_execute(Function f, std::size_t n, SharedFactory sf) const
-    //   -> decltype(inner_declval<Function>().bulk_execute(std::move(f), n, std::move(sf)))
-    // {
-    //   promise<void> promise;
-    //   future<void> future = promise.get_future();
-    //   this->executor_.bulk_execute([f = std::move(f), p = std::move(promise)](auto i, auto& s) mutable { f(i, s); }, n, std::move(sf));
-    //   future.wait();
-    // }
-
-    // template<class Function, class ResultFactory, class SharedFactory>
-    // auto bulk_twoway_execute(Function f, std::size_t n, ResultFactory rf, SharedFactory sf) const
-    //   -> decltype(inner_declval<Function>().bulk_twoway_execute(std::move(f), n, std::move(rf), std::move(sf)))
-    // {
-    //   auto future = this->executor_.bulk_twoway_execute(std::move(f), n, std::move(rf), std::move(sf));
-    //   future.wait();
-    //   return future;
-    // }
 
     // BUGBUG TODO
     // void make_bulk_value_task(...)

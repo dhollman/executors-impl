@@ -47,7 +47,7 @@ private:
       From from_;
       Function f_;
       adapter this_;
-      static constexpr execution::__transform_sender_desc_t<From, Function&> query(sender_t)
+      static constexpr __transform_sender_desc_t<From, Function&> query(sender_t)
       { return {}; }
       template <Receiver To>
       struct __receiver
@@ -108,6 +108,7 @@ private:
       }
     };
     template<Sender From, class Function>
+      requires ValuesTransform<Function&, From>
     auto make_value_task(From from, Function f) const -> Sender
     {
       return __sender<From, Function>{std::move(from), std::move(f), *this};
