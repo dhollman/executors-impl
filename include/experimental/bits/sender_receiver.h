@@ -711,14 +711,15 @@ using __values_transform_result_t =
         __meta_bind_front<invoke_result_t, Function>::template __result
     >;
 
-template <class Function, class From>
-concept bool ValuesTransform =
+template <class From, class Function>
+concept bool TransformSender =
     Sender<From> && requires
     {
         typename __values_transform_result_t<From, Function>;
     };
 
-template <Sender From, ValuesTransform<From> Function>
+template <Sender From, class Function>
+  requires TransformSender<From, Function>
 using __transform_sender_desc_t =
     conditional_t<
         is_void_v<__values_transform_result_t<From, Function>>,
@@ -730,7 +731,7 @@ using __transform_sender_desc_t =
     >;
 
 template <Sender From, class Function>
-  requires ValuesTransform<Function&, From>
+  requires TransformSender<From, Function&>
 struct transform_sender
 {
 private:
@@ -783,19 +784,20 @@ template <class Function, class R, class S>
 struct __bulk_invoke
 {
     Function* fun_;
+    size_t m_;
     R* r_;
     S* s_;
-    __bulk_invoke(Function& fun, R& r, S& s)
-      : fun_(&fun), r_(&r), s_(&s)
+    __bulk_invoke(Function& fun, size_t m, R& r, S& s)
+      : fun_(&fun), m_(m), r_(&r), s_(&s)
     {}
-    __bulk_invoke(Function& fun, any& r, any& s, int)
-      : __bulk_invoke{fun, *any_cast<R>(&r), *any_cast<S>(&s)}
+    __bulk_invoke(Function& fun, size_t m, any& r, any& s, int)
+      : __bulk_invoke{fun, m, *any_cast<R>(&r), *any_cast<S>(&s)}
     {}
     template <class... Args>
       requires Invocable<Function&, size_t, Args..., R&, S&>
-    decltype(auto) operator()(size_t n, Args&&... args)
+    decltype(auto) operator()(Args&&... args)
     {
-        return std::invoke(*fun_, n, (Args&&) args..., *r_, *s_);
+        return std::invoke(*fun_, m_, (Args&&) args..., *r_, *s_);
     }
 };
 
@@ -803,20 +805,25 @@ template <class Function, class S>
 struct __bulk_invoke<Function, void, S>
 {
     Function* fun_;
+    size_t m_;
     S* s_;
-    __bulk_invoke(Function& fun, __ignore, S& s)
-      : fun_(&fun), s_(&s)
+    __bulk_invoke(Function& fun, size_t m, __ignore, S& s)
+      : fun_(&fun), m_(m), s_(&s)
     {}
-    __bulk_invoke(Function& fun, any&, any& s, int)
-      : __bulk_invoke{fun, 0, *any_cast<S>(&s)}
+    __bulk_invoke(Function& fun, size_t m, any&, any& s, int)
+      : __bulk_invoke{fun, m, 0, *any_cast<S>(&s)}
     {}
     template <class... Args>
       requires Invocable<Function&, size_t, Args..., S&>
-    decltype(auto) operator()(size_t n, Args&&... args)
+    decltype(auto) operator()(Args&&... args)
     {
-        return std::invoke(*fun_, n, (Args&&) args..., *s_);
+        return std::invoke(*fun_, m_, (Args&&) args..., *s_);
     }
 };
+
+template <class Function, class RF, class SF>
+  requires Invocable<RF&> && Invocable<SF&>
+using __bulk_invoke_t = __bulk_invoke<Function, invoke_result_t<RF&>, invoke_result_t<SF&>>;
 
 } // namespace execution
 } // inline namespace executors_v1

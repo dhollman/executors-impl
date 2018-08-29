@@ -506,21 +506,13 @@ public:
   static constexpr sender_desc<exception_ptr, any_sender<exception_ptr, _self>> query(sender_t) noexcept
   { return {}; }
 
-  template<Sender From, class Function, class SF, class RF>
-    requires Invocable<SF&> && Invocable<RF&> &&
-             ValuesTransform<
-                __binder1st<
-                  __bulk_invoke<Function, invoke_result_t<RF&>, invoke_result_t<SF&>>,
-                  size_t
-                >,
-                From
-              >
+  template<class Function, class SF, class RF, TransformSender<__bulk_invoke_t<Function, RF, SF>> From>
   auto make_bulk_value_task(From from, Function f, std::size_t n, SF sf, RF rf) const -> Sender
   {
     using args_t = typename sender_traits<From>::template value_types<std::tuple>;
     using s_t = invoke_result_t<SF&>;
     using r_t = invoke_result_t<RF&>;
-    using result_t = __values_transform_result_t<From, __binder1st<__bulk_invoke<Function, r_t, s_t>, size_t>>;
+    using result_t = __values_transform_result_t<From, __bulk_invoke_t<Function, RF, SF>>;
     if (!impl_)
       throw bad_executor();
     auto from2 = impl_->make_bulk_value_task(
@@ -532,12 +524,12 @@ public:
       [f = std::move(f)](size_t m, any args, any& r, any& s) mutable -> any {
         if constexpr (is_void_v<result_t>)
           return std::apply(
-            __bind1st(__bulk_invoke<Function, r_t, s_t>{f, r, s, 0}, m),
+            __bulk_invoke_t<Function, RF, SF>{f, m, r, s, 0},
             *any_cast<args_t>(&args)
           ), any{};
         else
           return std::apply(
-            __bind1st(__bulk_invoke<Function, r_t, s_t>{f, r, s, 0}, m),
+            __bulk_invoke_t<Function, RF, SF>{f, m, r, s, 0},
             *any_cast<args_t>(&args)
           );
       },

@@ -130,7 +130,7 @@ class static_thread_pool
     }
 
     template <execution::Sender From, class Function>
-      requires execution::ValuesTransform<Function&, From>
+      requires execution::TransformSender<From, Function&>
     struct __sender
     {
       From from_;
@@ -191,34 +191,22 @@ class static_thread_pool
       }
     };
 
-    template <execution::Sender From, class Function>
-      requires execution::ValuesTransform<Function&, From> &&
-               Same<Interface, execution::oneway_t>
+    template <class Function, execution::TransformSender<Function&> From>
+      requires Same<Interface, execution::oneway_t>
     auto make_value_task(From from, Function f) const -> execution::Sender
     {
       return __sender<From, Function>{std::move(from), std::move(f), *this};
     }
 
     template <execution::Sender From, class Function, class SF, class RF>
-      requires Invocable<SF&> &&
-               execution::ValuesTransform<
-                 execution::__binder1st<
-                   execution::__bulk_invoke<Function, invoke_result_t<RF&>, invoke_result_t<SF&>>,
-                   size_t
-                 >,
-                 From
-               >
+      requires
+        execution::TransformSender<From, execution::__bulk_invoke_t<Function, RF, SF>>
     struct __bulk_sender
     {
       using r_t = invoke_result_t<RF&>;
       using s_t = invoke_result_t<SF&>;
-      using bulk_fn_t =
-        execution::__binder1st<
-          execution::__bulk_invoke<Function, r_t, s_t>,
-          size_t
-        >;
-      using sender_desc_t =
-        execution::__transform_sender_desc_t<From, bulk_fn_t>;
+      using bulk_fn_t = execution::__bulk_invoke_t<Function, RF, SF>;
+      using sender_desc_t = execution::__transform_sender_desc_t<From, bulk_fn_t>;
       From from_;
       Function f_;
       size_t n_;
@@ -270,13 +258,10 @@ class static_thread_pool
                   if (0 == --atomic_ref<size_t>(get<0>(s)))
                     execution::set_value(to, (decltype(args)&&) args...);
                 },
-                [&]()
+                [&]
                 {
                   return std::apply(
-                    execution::__bind1st(
-                      execution::__bulk_invoke<Function, r_t, s_t>{f, get<1>(s), get<2>(s)},
-                      m
-                    ),
+                    execution::__bulk_invoke_t<Function, RF, SF>{f, m, get<1>(s), get<2>(s)},
                     std::move(args)
                   );
                 }
@@ -308,18 +293,11 @@ class static_thread_pool
       }
     };
 
-    template <execution::Sender From, class Function, class SF, class RF>
-      requires Invocable<SF&> && Invocable<RF&> &&
-               execution::ValuesTransform<
-                 execution::__binder1st<
-                   execution::__bulk_invoke<Function, invoke_result_t<RF&>, invoke_result_t<SF&>>,
-                   size_t
-                 >,
-                 From
-               > &&
-               Same<Interface, execution::bulk_oneway_t>
-    execution::Sender make_bulk_value_task(
-        From from, Function f, std::size_t n, SF sf, RF rf) const
+    template <class Function, class SF, class RF,
+              execution::TransformSender<execution::__bulk_invoke_t<Function, RF, SF>> From>
+      requires Same<Interface, execution::bulk_oneway_t>
+    auto make_bulk_value_task(
+        From from, Function f, std::size_t n, SF sf, RF rf) const -> execution::Sender
     {
       return __bulk_sender<From, Function, SF, RF>{
         std::move(from), std::move(f), n, std::move(sf), std::move(rf), *this};

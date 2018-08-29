@@ -507,8 +507,7 @@ public:
     impl_ ? impl_->execute(std::move(fp)) : throw bad_executor();
   }
 
-  template<Sender From, class Function>
-    requires ValuesTransform<Function&, From>
+  template<class Function, TransformSender<Function&> From>
   auto make_value_task(From from, Function fun) const -> Sender
   {
     using args_t = typename sender_traits<From>::template value_types<std::tuple>;
