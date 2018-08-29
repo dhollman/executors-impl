@@ -506,7 +506,7 @@ public:
   static constexpr sender_desc<exception_ptr, any_sender<exception_ptr, _self>> query(sender_t) noexcept
   { return {}; }
 
-  template<class Function, class SF, class RF, TransformSender<__bulk_invoke_t<Function, RF, SF>> From>
+  template<class Function, class SF, class RF, TransformedSender<__bulk_invoke_t<Function, RF, SF>> From>
   auto make_bulk_value_task(From from, Function f, std::size_t n, SF sf, RF rf) const -> Sender
   {
     using args_t = typename sender_traits<From>::template value_types<std::tuple>;
@@ -524,12 +524,12 @@ public:
       [f = std::move(f)](size_t m, any args, any& r, any& s) mutable -> any {
         if constexpr (is_void_v<result_t>)
           return std::apply(
-            __bulk_invoke_t<Function, RF, SF>{f, m, r, s, 0},
+            __bulk_invoke{f, m, any_cast<r_t>(&r), any_cast<s_t>(&s)},
             *any_cast<args_t>(&args)
           ), any{};
         else
           return std::apply(
-            __bulk_invoke_t<Function, RF, SF>{f, m, r, s, 0},
+            __bulk_invoke{f, m, any_cast<r_t>(&r), any_cast<s_t>(&s)},
             *any_cast<args_t>(&args)
           );
       },

@@ -130,7 +130,7 @@ class static_thread_pool
     }
 
     template <execution::Sender From, class Function>
-      requires execution::TransformSender<From, Function&>
+      requires execution::TransformedSender<From, Function&>
     struct __sender
     {
       From from_;
@@ -191,7 +191,7 @@ class static_thread_pool
       }
     };
 
-    template <class Function, execution::TransformSender<Function&> From>
+    template <class Function, execution::TransformedSender<Function&> From>
       requires Same<Interface, execution::oneway_t>
     auto make_value_task(From from, Function f) const -> execution::Sender
     {
@@ -200,7 +200,7 @@ class static_thread_pool
 
     template <execution::Sender From, class Function, class SF, class RF>
       requires
-        execution::TransformSender<From, execution::__bulk_invoke_t<Function, RF, SF>>
+        execution::TransformedSender<From, execution::__bulk_invoke_t<Function, RF, SF>>
     struct __bulk_sender
     {
       using r_t = invoke_result_t<RF&>;
@@ -258,10 +258,10 @@ class static_thread_pool
                   if (0 == --atomic_ref<size_t>(get<0>(s)))
                     execution::set_value(to, (decltype(args)&&) args...);
                 },
-                [&]
+                [&]() -> decltype(auto)
                 {
                   return std::apply(
-                    execution::__bulk_invoke_t<Function, RF, SF>{f, m, get<1>(s), get<2>(s)},
+                    execution::__bulk_invoke{f, m, &get<1>(s), &get<2>(s)},
                     std::move(args)
                   );
                 }
@@ -294,7 +294,7 @@ class static_thread_pool
     };
 
     template <class Function, class SF, class RF,
-              execution::TransformSender<execution::__bulk_invoke_t<Function, RF, SF>> From>
+              execution::TransformedSender<execution::__bulk_invoke_t<Function, RF, SF>> From>
       requires Same<Interface, execution::bulk_oneway_t>
     auto make_bulk_value_task(
         From from, Function f, std::size_t n, SF sf, RF rf) const -> execution::Sender

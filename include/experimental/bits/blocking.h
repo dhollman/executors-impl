@@ -108,7 +108,7 @@ private:
   public:
     using impl::enumerator_adapter<adapter, Executor, blocking_t, always_t>::enumerator_adapter;
 
-    template<class Function, TransformSender<Function&> From>
+    template<class Function, TransformedSender<Function&> From>
     auto make_value_task(From from, Function f) const -> Sender
     {
       // If `From` sends arguments `Args...` through the value channel, then
