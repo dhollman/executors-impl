@@ -113,8 +113,7 @@ private:
     {
       // If `From` sends arguments `Args...` through the value channel, then
       // `value_t` is `invoke_result_t<Function&, Args...>`:
-      using value_t = typename sender_traits<From>::template value_types<
-          __meta_bind_front<invoke_result_t, Function&>::template __result>;
+      using value_t = __values_transform_result_t<From, Function&>;
       return __sender<From, Function, value_t>{std::move(from), std::move(f), *this};
     }
 

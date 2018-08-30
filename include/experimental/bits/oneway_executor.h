@@ -525,10 +525,7 @@ public:
         },
         [fun = std::move(fun)](any v) mutable -> any
         {
-            if constexpr (is_void_v<__values_transform_result_t<From, Function&>>)
-                return std::apply(fun, *any_cast<args_t>(&v)), any{};
-            else
-                return std::apply(fun, *any_cast<args_t>(&v));
+            return std::apply(__compose(__to_any, std::move(fun)), *any_cast<args_t>(&v));
         }
     );
     if constexpr (is_void_v<result_t>)

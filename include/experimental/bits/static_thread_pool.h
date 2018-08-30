@@ -168,8 +168,12 @@ class static_thread_pool
           pool_->execute(Blocking{}, Continuation{}, allocator_,
             [f = std::move(f_), to = std::move(to_), args = std::make_tuple((Args&&) args...)]() mutable
             {
+              // Roughly equivalent to set_value(to, apply(f, args)):
               std::apply(
-                execution::__compose(execution::__bind1st(execution::set_value, std::ref(to)), std::move(f)),
+                execution::__compose(
+                  execution::__bind1st(execution::set_value, std::ref(to)),
+                  std::move(f)
+                ),
                 std::move(args)
               );
             }
@@ -251,27 +255,22 @@ class static_thread_pool
             [f = std::move(f_), n = n_, to = std::move(to_), args = make_tuple((Ts&&) ts...)](
                 size_t m, tuple<size_t, rf_result_t, s_t>& s) mutable
             {
-              execution::__compose(
-                [&](auto&&...args)
-                {
-                  // If we had a bulk reduce function, we could drop the atomic here.
-                  if (0 == --atomic_ref<size_t>(get<0>(s)))
-                    execution::set_value(to, (decltype(args)&&) args...);
-                },
-                [&]() -> decltype(auto)
-                {
-                  return std::apply(
-                    execution::__bulk_invoke{f, m, &get<1>(s), &get<2>(s)},
-                    std::move(args)
-                  );
-                }
-              )();
+              std::apply(
+                execution::__compose(
+                  [&](auto&... r) mutable {
+                    if (0 == --atomic_ref<size_t>(get<0>(s)))
+                      execution::set_value(to, r...);
+                  },
+                  execution::__bulk_invoke{f, m, &get<1>(s), &get<2>(s)}
+                ),
+                std::move(args)
+              );
             },
             n_,
             [sf = std::move(sf_), rf = std::move(rf_), n = n_]() mutable
             {
               if constexpr (is_void_v<invoke_result_t<RF&>>)
-                return rf(), std::make_tuple(n, 0, sf());
+                return std::make_tuple(n, (rf(), 0), sf());
               else
                 return std::make_tuple(n, rf(), sf());
             }
@@ -284,7 +283,8 @@ class static_thread_pool
       {
         execution::submit(
           from_,
-          __receiver<To>{std::move(f_), n_, std::move(sf_), std::move(rf_), std::move(to), this_.pool_, this_.allocator_}
+          __receiver<To>{std::move(f_), n_, std::move(sf_), std::move(rf_),
+                         std::move(to), this_.pool_, this_.allocator_}
         );
       }
       executor_impl executor() const
@@ -294,7 +294,7 @@ class static_thread_pool
     };
 
     template <class Function, class SF, class RF,
-              execution::TransformedSender<execution::__bulk_invoke_t<Function, RF, SF>> From>
+        execution::TransformedSender<execution::__bulk_invoke_t<Function, RF, SF>> From>
       requires Same<Interface, execution::bulk_oneway_t>
     auto make_bulk_value_task(
         From from, Function f, std::size_t n, SF sf, RF rf) const -> execution::Sender

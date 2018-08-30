@@ -808,6 +808,8 @@ template <class Function, class RF, class SF>
   requires Invocable<RF&> && Invocable<SF&>
 using __bulk_invoke_t = __bulk_invoke<Function, invoke_result_t<RF&>, invoke_result_t<SF&>>;
 
+inline constexpr auto const __to_any = [](auto&&... a) { return any{(decltype(a)&&) a...}; };
+
 } // namespace execution
 } // inline namespace executors_v1
 } // namespace experimental

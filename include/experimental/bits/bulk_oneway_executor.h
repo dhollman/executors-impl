@@ -522,26 +522,17 @@ public:
         [](auto&&... args) { return any{in_place_type<args_t>, (decltype(args)&&) args...}; }
       },
       [f = std::move(f)](size_t m, any args, any& r, any& s) mutable -> any {
-        if constexpr (is_void_v<result_t>)
-          return std::apply(
-            __bulk_invoke{f, m, any_cast<r_t>(&r), any_cast<s_t>(&s)},
-            *any_cast<args_t>(&args)
-          ), any{};
-        else
-          return std::apply(
-            __bulk_invoke{f, m, any_cast<r_t>(&r), any_cast<s_t>(&s)},
-            *any_cast<args_t>(&args)
-          );
+        return std::apply(
+          __compose(__to_any, __bulk_invoke{f, m, any_cast<r_t>(&r), any_cast<s_t>(&s)}),
+          *any_cast<args_t>(&args)
+        );
       },
       n,
       [sf = std::move(sf)]() mutable -> any {
         return sf();
       },
       [rf = std::move(rf)]() mutable -> any {
-        if constexpr (is_void_v<r_t>)
-          return rf(), any{};
-        else
-          return rf();
+        return __compose(__to_any, std::move(rf))();
       }
     );
     if constexpr (is_void_v<result_t>)
