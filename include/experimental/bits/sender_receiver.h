@@ -76,39 +76,39 @@ inline constexpr struct set_done_fn
             logic_error{"std::promise doesn't support set_done"}));
     }
     template <_Receiver To>
-      requires requires (To& to) { to.set_done(); }
-    void operator()(To& to) const noexcept(noexcept(to.set_done()))
+      requires requires (To&& to) { ((To&&) to).set_done(); }
+    void operator()(To&& to) const noexcept(noexcept(((To&&)to).set_done()))
     {
-        (void) to.set_done();
+        (void) ((To&&) to).set_done();
     }
     template <_Receiver To>
-      requires requires (To& to) { set_done(to); }
-    void operator()(To& to) const volatile noexcept(noexcept(set_done(to)))
+      requires requires (To&& to) { set_done((To&&) to); }
+    void operator()(To&& to) const volatile noexcept(noexcept(set_done((To&&) to)))
     {
-        (void) set_done(to);
+        (void) set_done((To&&) to);
     }
 } const set_done {};
 
 template <class To>
 concept bool Receiver =
-    _Receiver<To> && Invocable<set_done_fn const&, To&>;
+    _Receiver<To> && Invocable<set_done_fn const&, To>;
 
 inline constexpr struct set_value_fn
 {
     // This works for std::promise<T> and std::promise<void> also:
     template <Receiver To, class... Args>
-      requires requires (To& to, Args&&... args) { to.set_value((Args&&) args...); }
-    void operator()(To& to, Args&&... args) const
-        noexcept(noexcept(to.set_value((Args&&) args...)))
+      requires requires (To&& to, Args&&... args) { ((To&&) to).set_value((Args&&) args...); }
+    void operator()(To&& to, Args&&... args) const
+        noexcept(noexcept(((To&&) to).set_value((Args&&) args...)))
     {
-        (void) to.set_value((Args&&) args...);
+        (void) ((To&&) to).set_value((Args&&) args...);
     }
     template <Receiver To, class... Args>
-      requires requires (To& to, Args&&... args) { set_value(to, (Args&&) args...); }
-    void operator()(To& to, Args&&... args) const
-        noexcept(noexcept(set_value(to, (Args&&) args...)))
+      requires requires (To&& to, Args&&... args) { set_value((To&&) to, (Args&&) args...); }
+    void operator()(To&& to, Args&&... args) const
+        noexcept(noexcept(set_value((To&&) to, (Args&&) args...)))
     {
-        (void) set_value(to, (Args&&) args...);
+        (void) set_value((To&&)to, (Args&&) args...);
     }
 } const set_value {};
 
@@ -127,24 +127,24 @@ inline constexpr struct set_error_fn
         to.set_exception(make_exception_ptr((U&&) u));
     }
     template <Receiver To, class E>
-      requires requires (To& to, E&& e) { to.set_error((E&&) e); }
-    void operator()(To& to, E&& e) const noexcept(noexcept(to.set_error((E&&) e)))
+      requires requires (To&& to, E&& e) { ((To&&)to).set_error((E&&) e); }
+    void operator()(To&& to, E&& e) const noexcept(noexcept(((To&&)to).set_error((E&&) e)))
     {
-        to.set_error((E&&) e);
+        ((To&&)to).set_error((E&&) e);
     }
     template <Receiver To, class E>
-      requires requires (To& to, E&& e) { set_error(to, (E&&) e); }
-    void operator()(To& to, E&& e) const volatile noexcept(noexcept(set_error(to, (E&&) e)))
+      requires requires (To&& to, E&& e) { set_error((To&&) to, (E&&) e); }
+    void operator()(To&& to, E&& e) const volatile noexcept(noexcept(set_error((To&&) to, (E&&) e)))
     {
-        set_error(to, (E&&) e);
+        set_error((To&&) to, (E&&) e);
     }
 } const set_error {};
 
 template <class To, class E = exception_ptr, class... Args>
 concept bool ReceiverOf =
     Receiver<To> &&
-    Invocable<set_error_fn const&, To&, E> &&
-    Invocable<set_value_fn const&, To&, Args...>;
+    Invocable<set_error_fn const&, To, E> &&
+    Invocable<set_value_fn const&, To, Args...>;
 
 namespace __test__
 {
@@ -175,7 +175,7 @@ template <class From>
 concept bool _Sender =
     requires (From& from)
     {
-        { query_impl::query_fn{}(from, sender_t{}) } -> sender_desc<auto, auto...>;
+        { query_impl::query_fn{}(from, sender_t{}) }; // This specificity seems unnecessary: -> sender_desc<auto, auto...>;
     };
 
 namespace __get_executor
@@ -217,24 +217,24 @@ struct sender_traits : sender_desc_t<From>
 inline constexpr struct submit_fn
 {
     template <_Sender From, Receiver To>
-      requires requires (From& from, To to) { from.submit((To&&) to); }
-    void operator()(From& from, To to) const
-        noexcept(noexcept(from.submit((To&&) to)))
+      requires requires (From&& from, To to) { ((From&&) from).submit((To&&) to); }
+    void operator()(From&& from, To to) const
+        noexcept(noexcept(((From&&) from).submit((To&&) to)))
     {
-        (void) from.submit((To&&) to);
+        (void) ((From&&) from).submit((To&&) to);
     }
     template <_Sender From, Receiver To>
-      requires requires (From& from, To to) { submit(from, (To&&) to); }
-    void operator()(From& from, To to) const volatile
-        noexcept(noexcept(submit(from, (To&&) to)))
+      requires requires (From&& from, To to) { submit((From&&) from, (To&&) to); }
+    void operator()(From&& from, To to) const volatile
+        noexcept(noexcept(submit((From&&) from, (To&&) to)))
     {
-        (void) submit(from, (To&&) to);
+        (void) submit((From&&) from, (To&&) to);
     }
 } const submit {};
 
 template <class From, class To>
 concept bool SenderTo =
-    Sender<From> && Receiver<To> && Invocable<submit_fn const&, From&, To>;
+    Sender<From> && Receiver<To> && Invocable<submit_fn const&, From, To>;
 
 template <class To, class From>
 concept bool ReceiverFrom = SenderTo<From, To>;
@@ -405,12 +405,12 @@ struct __noop_submit
 };
 struct __nope {};
 template <class OnSubmit, class OnExecutor = __nope>
-  requires requires { typename OnSubmit::sender_desc_t; }
+//  requires requires { typename OnSubmit::sender_desc_t; }
 struct sender
 {
 private:
-    [[no_unique_address]] OnSubmit on_submit_{};
-    [[no_unique_address]] OnExecutor on_executor_{};
+    [[no_unique_address]] OnSubmit on_submit_;
+    [[no_unique_address]] OnExecutor on_executor_;
 public:
     sender() = default;
     sender(OnSubmit on_submit) : on_submit_(std::move(on_submit))
@@ -418,7 +418,8 @@ public:
     sender(OnSubmit on_submit, OnExecutor on_executor)
       : on_submit_(std::move(on_submit)), on_executor_(std::move(on_executor))
     {}
-    static constexpr typename OnSubmit::sender_desc_t query(sender_t) noexcept
+    template <std::Same<OnSubmit> OnSubmitLazy>
+    friend constexpr typename OnSubmitLazy::sender_desc_t query(sender<OnSubmitLazy, OnExecutor> const&, sender_t) noexcept
     { return {}; }
     template <Receiver To>
       requires Invocable<OnSubmit&, To>
@@ -465,6 +466,7 @@ public:
     Interface const* operator->() const noexcept { return ptr_.get(); }
     Interface& operator*() noexcept { return *ptr_; }
     Interface const& operator*() const noexcept { return *ptr_; }
+    operator bool() const noexcept { return !!ptr_; }
 };
 
 template <class...>
@@ -503,6 +505,7 @@ public:
     void set_done() { impl_->set_done(); }
     void set_error(E e) { impl_->set_error((E&&) e); }
     void set_value(Args... args) { impl_->set_value((Args&&) args...); }
+    operator bool() const noexcept { return !!impl_; }
 };
 
 // For type-erasing senders that send type-erased senders that send
@@ -735,8 +738,8 @@ template <Sender From, class Function>
 struct transform_sender
 {
 private:
-    From from_{};
-    Function fun_{};
+    From from_;
+    Function fun_;
     template <Receiver To>
     struct __receiver
     {

@@ -520,7 +520,13 @@ public:
             std::move(from),
             [](auto&&... args)
             {
-                return any(in_place_type<args_t>, (decltype(args)&&) args...);
+              // if args... is already an instance of std::any, the in-place constructor won't work
+              //if constexpr (sizeof...(args) == 1 && ... && is_same_v<decltype(args), any>) {
+              //  return any((decltype(args)&&) args...);
+              //}
+              //else {
+              return any(in_place_type<args_t>, (decltype(args)&&) args...);
+              //}
             }
         },
         [fun = std::move(fun)](any v) mutable -> any
