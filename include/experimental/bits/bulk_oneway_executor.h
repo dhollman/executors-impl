@@ -507,7 +507,7 @@ public:
   { return {}; }
 
   template<class Function, class SF, class RF, TransformedSender<__bulk_invoke_t<Function, RF, SF>> From>
-  auto make_bulk_value_task(From from, Function f, std::size_t n, SF sf, RF rf) const -> Sender
+  auto make_bulk_value_task(From from, Function f, std::size_t n, SF sf, RF rf) const
   {
     using args_t = typename sender_traits<From>::template value_types<std::tuple>;
     using s_t = invoke_result_t<SF&>;

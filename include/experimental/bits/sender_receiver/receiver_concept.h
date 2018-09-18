@@ -19,13 +19,13 @@ struct receiver_t : __property_base<false, false>
 };
 
 template <class To>
-concept bool _Receiver =
+_CONCEPT _Receiver =
     Invocable<query_impl::query_fn const&, To&, receiver_t>;
 
 inline constexpr struct set_done_fn
 {
     template <class T>
-    void operator()(std::promise<T>& to) const
+    constexpr void operator()(std::promise<T>& to) const
         noexcept(noexcept(to.set_exception(make_exception_ptr(logic_error{""}))))
     {
         (void) to.set_exception(make_exception_ptr(
@@ -33,20 +33,20 @@ inline constexpr struct set_done_fn
     }
     template <_Receiver To>
       requires requires (To&& to) { ((To&&) to).set_done(); }
-    void operator()(To&& to) const noexcept(noexcept(((To&&)to).set_done()))
+    constexpr void operator()(To&& to) const noexcept(noexcept(((To&&)to).set_done()))
     {
         (void) ((To&&) to).set_done();
     }
     template <_Receiver To>
       requires requires (To&& to) { set_done((To&&) to); }
-    void operator()(To&& to) const volatile noexcept(noexcept(set_done((To&&) to)))
+    constexpr void operator()(To&& to) const volatile noexcept(noexcept(set_done((To&&) to)))
     {
         (void) set_done((To&&) to);
     }
 } const set_done {};
 
 template <class To>
-concept bool Receiver =
+_CONCEPT Receiver =
     _Receiver<To> && Invocable<set_done_fn const&, To>;
 
 inline constexpr struct set_value_fn
@@ -97,7 +97,7 @@ inline constexpr struct set_error_fn
 } const set_error {};
 
 template <class To, class E = exception_ptr, class... Args>
-concept bool ReceiverOf =
+_CONCEPT ReceiverOf =
     Receiver<To> &&
     Invocable<set_error_fn const&, To, E> &&
     Invocable<set_value_fn const&, To, Args...>;

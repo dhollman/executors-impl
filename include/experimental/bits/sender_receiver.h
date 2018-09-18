@@ -45,7 +45,7 @@ namespace execution {
 
 
 template <class To, class From>
-concept bool ReceiverFrom = SenderTo<From, To>;
+_CONCEPT ReceiverFrom = SenderTo<From, To>;
 
 // TODO move this to tests
 // namespace __test__
@@ -66,7 +66,7 @@ concept bool ReceiverFrom = SenderTo<From, To>;
 
 
 // template <class Adapt, class From>
-// concept bool Adaptor =
+// _CONCEPT Adaptor =
 //     Sender<From> &&
 //     requires (Adapt const &a, From& from)
 //     {

@@ -108,7 +108,7 @@ private:
       }
     };
     template<class Function, TransformedSender<Function&> From>
-    auto make_value_task(From from, Function f) const -> Sender
+    auto make_value_task(From from, Function f) const
     {
       return __sender<From, Function>{std::move(from), std::move(f), *this};
     }

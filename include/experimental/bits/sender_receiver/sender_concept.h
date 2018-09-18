@@ -15,7 +15,7 @@ struct sender_t : __property_base<false, false>
 };
 
 template <class From>
-concept bool _Sender =
+_CONCEPT _Sender =
     requires (From& from)
     {
         { query_impl::query_fn{}(from, sender_t{}) };
@@ -31,13 +31,15 @@ auto get_executor(From from)
 struct __fn
 {
     template <_Sender From>
-      requires requires (From& from) { { std::move(from).executor() } -> auto; }
+      requires requires (From& from) { from.executor(); }
+    constexpr
     auto operator()(From from) const
     {
         return std::move(from).executor();
     }
     template <_Sender From>
-      requires requires (From& from) { { get_executor(std::move(from)) } -> auto; }
+      requires requires (From& from) { get_executor(from); }
+    constexpr
     auto operator()(From from) const volatile
     {
         return get_executor(std::move(from));
@@ -47,7 +49,7 @@ struct __fn
 inline constexpr struct get_executor_fn : __get_executor::__fn {} const get_executor {};
 
 template <class From>
-concept bool Sender =
+_CONCEPT Sender =
     _Sender<From> && Invocable<get_executor_fn const&, From&>;
 
 // TODO decide if sender_description_t can be required (e.g., because its inclusion may introduce overheads in certain cases)
@@ -76,7 +78,7 @@ struct sender_traits : sender_desc_t<From>
 {};
 
 template <class Description>
-concept bool SenderDescription =
+_CONCEPT SenderDescription =
     requires (Description& desc)
     {
         typename Description::error_type;
@@ -85,28 +87,28 @@ concept bool SenderDescription =
 
 
 template <class From>
-concept bool _DescribedSender =
+_CONCEPT _DescribedSender =
     requires (From& from)
     {
         { query_impl::query_fn{}(from, sender_description_t{}) } -> SenderDescription;
     };
 
 template <class From>
-concept bool DescribedSender =
+_CONCEPT DescribedSender =
     Sender<From> && _DescribedSender<From>;
 
 inline constexpr struct submit_fn
 {
     template <_Sender From, Receiver To>
       requires requires (From&& from, To to) { ((From&&) from).submit((To&&) to); }
-    void operator()(From&& from, To to) const
+    constexpr inline void operator()(From&& from, To to) const
         noexcept(noexcept(((From&&) from).submit((To&&) to)))
     {
         (void) ((From&&) from).submit((To&&) to);
     }
     template <_Sender From, Receiver To>
       requires requires (From&& from, To to) { submit((From&&) from, (To&&) to); }
-    void operator()(From&& from, To to) const volatile
+    constexpr inline void operator()(From&& from, To to) const volatile
         noexcept(noexcept(submit((From&&) from, (To&&) to)))
     {
         (void) submit((From&&) from, (To&&) to);
@@ -114,7 +116,7 @@ inline constexpr struct submit_fn
 } const submit {};
 
 template <class From, class To>
-concept bool SenderTo =
+_CONCEPT SenderTo =
     Sender<From> && Receiver<To> && Invocable<submit_fn const&, From, To>;
 
 } // end namespace execution

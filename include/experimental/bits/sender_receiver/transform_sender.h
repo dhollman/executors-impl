@@ -124,7 +124,7 @@ using __values_transform_result_t =
     >;
 
 template <class From, class Function>
-concept bool TransformedSender =
+_CONCEPT TransformedSender =
     Sender<From> && requires
     {
         typename __values_transform_result_t<From, Function>;

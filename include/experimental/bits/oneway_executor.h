@@ -508,7 +508,7 @@ public:
   }
 
   template<class Function, TransformedSender<Function&> From>
-  auto make_value_task(From from, Function fun) const -> Sender
+  auto make_value_task(From from, Function fun) const
   {
     using args_t = typename sender_traits<From>::template value_types<std::tuple>;
     using result_t = __values_transform_result_t<From, Function&>;
