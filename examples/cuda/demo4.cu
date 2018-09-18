@@ -38,11 +38,6 @@ struct printf_fn
   }
 };
 
-template <class...>
-struct _____________________________TYPE_DISPLAY________________________________;
-#define TYPE_DISPLAY(...) \
-    _____________________________TYPE_DISPLAY________________________________<__VA_ARGS__> __test__{}
-
 void do_some_work()
 {
   printf("Doing some work\n");
