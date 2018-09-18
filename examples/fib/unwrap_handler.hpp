@@ -33,24 +33,32 @@ private:
         std::move(recv_).set_done();
       }
 
-      static constexpr void query(receiver_t) { }
+      //static constexpr void query(receiver_t) { }
+      template <class Property>
+        requires requires(Recv const& r, Property&& p) { query_impl::query_fn{}(r, (Property&&) p); }
+      auto query(Property&& p)
+      {
+        return execution::query(recv_, (Property&&) p);
+      }
     };
 
-    template <std::Same<WrappedSender> WS>
-    using _lazy_sender_desc_t = sender_traits<tuple_element_t<0,
-      typename sender_traits<WS>::template value_types<tuple>
-    >>;
+    //template <std::Same<WrappedSender> WS>
+    //using _lazy_sender_desc_t = sender_traits<tuple_element_t<0,
+    //  typename sender_traits<WS>::template value_types<tuple>
+    //>>;
 
     // be lazy with sender description retrieval, so it gets used only if needed
-    template <std::Same<WrappedSender> WS>
-    friend constexpr _lazy_sender_desc_t<WS> query(__wrapped_sender<WS> const&, sender_t) {
-      return {};
-    }
+    //template <std::Same<WrappedSender> WS>
+    //friend constexpr _lazy_sender_desc_t<WS> query(__wrapped_sender<WS> const&, sender_description_t) {
+    //  return {};
+    //}
+
+    static constexpr void query(sender_t) noexcept { }
 
     WrappedSender wrapped_sender_;
     Executor ex_;
 
-    template <Receiver R>
+    template <typename R>
     void submit(R&& r) {
       std::move(wrapped_sender_).submit(
         __receiver<decay_t<R>>{forward<R>(r)}

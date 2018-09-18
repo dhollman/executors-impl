@@ -25,7 +25,7 @@ struct just_sender {
     });
   }
 
-  static constexpr execution::sender_desc<std::exception_ptr, T> query(execution::sender_t) { return { }; }
+  static constexpr void query(execution::sender_t) noexcept { }
 
   auto executor() { return ex_; }
 };
@@ -37,7 +37,7 @@ just_sender(T, Executor) -> just_sender<T, Executor>;
 template <class Executor, execution::ReceiverOf<std::exception_ptr, int> R>
 void fib(int n, Executor ex, R r) {
   if(n < 2) {
-    just_sender{n, ex}.submit(std::move(r));
+    ex.make_value_task(ex, [n](auto&&){ return n; }).submit(std::move(r));
   }
   else {
     auto subject_factory = execution::query(ex, execution::subject_factory<int>);

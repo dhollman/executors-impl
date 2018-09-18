@@ -42,8 +42,6 @@ public:
     operator bool() const noexcept { return !!ptr_; }
 };
 
-template <class...>
-struct __typelist;
 
 } // end namespace execution
 } // end inline namespace executors_v1

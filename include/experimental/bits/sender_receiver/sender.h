@@ -48,9 +48,10 @@ struct __noop_submit
         set_value(to);
     }
 };
+
 struct __nope {};
+
 template <class OnSubmit, class OnExecutor = __nope>
-//  requires requires { typename OnSubmit::sender_desc_t; }
 struct sender
 {
 private:
@@ -63,15 +64,28 @@ public:
     sender(OnSubmit on_submit, OnExecutor on_executor)
       : on_submit_(std::move(on_submit)), on_executor_(std::move(on_executor))
     {}
-    template <std::Same<OnSubmit> OnSubmitLazy>
-    friend constexpr typename OnSubmitLazy::sender_desc_t query(sender<OnSubmitLazy, OnExecutor> const&, sender_t) noexcept
-    { return {}; }
+
+    static constexpr void query(sender_t) noexcept { }
+
+    //template <std::Same<OnSubmit> OnSubmitLazy>
+    //friend constexpr typename OnSubmitLazy::sender_desc_t query(sender<OnSubmitLazy, OnExecutor> const&, sender_description_t) noexcept
+    //  requires requires { typename OnSubmitLazy::sender_desc_t; }
+    //{ return {}; }
+
     template <Receiver To>
       requires Invocable<OnSubmit&, To>
-    void submit(To to)
+    void submit(To to) &
     {
         on_submit_(std::move(to));
     }
+
+    template <Receiver To>
+      requires Invocable<OnSubmit&&, To>
+    void submit(To to) &&
+    {
+        std::move(on_submit_)(std::move(to));
+    }
+
     auto executor() const requires _NonVoidInvocable<OnExecutor const&>
     {
         return on_executor_();

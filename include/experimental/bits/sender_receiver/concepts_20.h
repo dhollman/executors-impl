@@ -33,4 +33,7 @@ template<class F, class... Args>
 concept bool _NonVoidInvocable =
   Invocable<F, Args...> && !_VoidInvocable<F, Args...>;
 
+template <class...>
+struct __typelist;
+
 } // end namespace std

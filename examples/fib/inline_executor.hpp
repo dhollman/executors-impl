@@ -5,6 +5,7 @@
 #include <utility>
 
 struct inline_executor {
+
   template <class F, class R>
   struct __inline_receiver {
     F f_;
@@ -42,25 +43,28 @@ struct inline_executor {
       using type = std::invoke_result_t<F, Values...>;
     };
 
-    template <std::Same<S> LazyS>
-    using sender_desc_t = std::experimental::execution::sender_desc<
-      std::exception_ptr,
-      typename std::experimental::execution::sender_traits<LazyS>::template value_types<_value_types_helper>::type
-    >;
+    // template <std::Same<S> LazyS>
+    // using _sender_desc_t = std::experimental::execution::sender_desc<
+    //   std::exception_ptr,
+    //   typename std::experimental::execution::sender_traits<LazyS>::template value_types<_value_types_helper>::type
+    // >;
 
-    template <std::Same<S> LazyS>
-    friend constexpr sender_desc_t<LazyS> query(
-      __task_submit_fn<LazyS, F> const&,
-      std::experimental::execution::sender_t
-    ) noexcept { return { }; }
+    // template <std::Same<S> LazyS>
+    // friend constexpr _sender_desc_t<LazyS> query(
+    //   __task_submit_fn<LazyS, F> const&,
+    //   std::experimental::execution::sender_description_t
+    // ) noexcept { return { }; }
 
-    
+    static constexpr void query(std::experimental::execution::sender_t) noexcept { }
+
     template <class Receiver>
     void submit(Receiver&& r) {
       std::move(s_).submit(
         __inline_receiver<F, std::decay_t<Receiver>>{std::move(f_), std::forward<Receiver>(r)}
       );
     }
+
+    auto executor() const { return inline_executor{}; }
   };
 
   template <class NullaryFunction>
@@ -75,15 +79,13 @@ struct inline_executor {
 
   template <std::experimental::execution::Sender S, class Function>
   auto make_value_task(S&& s, Function f) const {
-    return std::experimental::execution::sender{
-      __task_submit_fn<std::decay_t<S>, Function>{
-        std::forward<S>(s), std::move(f)
-      },
-      []() { return inline_executor{}; }
+    return __task_submit_fn<std::decay_t<S>, Function>{
+      std::forward<S>(s), std::move(f)
     };
   }
 
   using sender_desc_t = std::experimental::execution::sender_desc<std::exception_ptr, inline_executor>;
-  static constexpr sender_desc_t query(std::experimental::execution::sender_t) { return { }; }
+  static constexpr sender_desc_t query(std::experimental::execution::sender_description_t) { return { }; }
+  static constexpr void query(std::experimental::execution::sender_t) { }
 
 };

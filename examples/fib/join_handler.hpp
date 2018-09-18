@@ -24,26 +24,20 @@ struct __list_cat<List, List<A1...>, List<A2...>, Lists...>
   using type = typename __list_cat<List, List<A1..., A2...>, Lists...>::type;
 };
 
-template <class Error, class... Senders>
-struct __joined_on_submit_fn;
+template <class Executor, class Error, class... Senders>
+struct __joined_sender;
 
 template <class FinalReceiver, class ValueTuple, class... Senders>
 struct __nested_joined_recv;
 
-template <class Error, class Sender, class... Senders>
-struct __joined_on_submit_fn<Error, Sender, Senders...> {
-  tuple<Sender, Senders...> senders_;
-  struct sender_desc_t {
-    using error_type = Error;
-    template <template <class...> class List>
-    using value_types = typename __list_cat<List,
-      typename sender_traits<Sender>::template value_types<List>,
-      typename sender_traits<Senders>::template value_types<List>...
-    >::type;
-  };
+template <class Executor, class Error, class Sender, class... Senders>
+struct __joined_sender<Executor, Error, Sender, Senders...> {
 
-  template <Receiver R>
-  void operator()(R&& r) {
+  tuple<Sender, Senders...> senders_;
+  Executor ex_;
+
+  template <typename R>
+  void submit(R&& r) {
     using nested_recv_t = __nested_joined_recv<decay_t<R>, tuple<>, Senders...>;
     std::apply(
       [&](auto&& sender, auto&&... senders) {
@@ -58,6 +52,27 @@ struct __joined_on_submit_fn<Error, Sender, Senders...> {
       std::move(senders_)
     );
   }
+
+  //template <typename... LazilyResolvedSenders>
+  //struct _lazy_sender_desc_t
+  //{
+  //  using error_type = Error;
+  //  template <template <class...> class List>
+  //  using value_types = typename __list_cat<List,
+  //    typename sender_traits<LazilyResolvedSenders>::template value_types<List>...
+  //  >::type;
+  //};
+
+  //// note the lack of constraint is a workaround for a variadic bug (I think?) with concepts in GCC
+  //template <std::Same<Sender> LazilyResolvedSender, typename... LazilyResolvedSenders>
+  //friend constexpr _lazy_sender_desc_t<LazilyResolvedSender, LazilyResolvedSenders...>
+  //query(__joined_sender<Error, LazilyResolvedSender, LazilyResolvedSenders...> const&, sender_description_t) noexcept
+  //  requires (std::Same<LazilyResolvedSenders, Senders> && ...)
+  //{ return { }; }
+
+  static constexpr void query(sender_t) noexcept { }
+
+  inline auto executor() const { return ex_; }
   
 };
 
@@ -125,11 +140,6 @@ template <class FinalReceiver, class... Values, class Sender, class... Senders>
 struct __nested_joined_recv<FinalReceiver, tuple<Values...>, Sender, Senders...> 
   : __nested_joined_recv_common<FinalReceiver>
 {
-  using next_recv_t = __nested_joined_recv<
-    FinalReceiver,
-    typename __list_cat<tuple, tuple<Values...>, typename sender_traits<Sender>::template value_types<tuple>>::type,
-    Senders...
-  >;
 
   using base_t = __nested_joined_recv_common<FinalReceiver>;
 
@@ -163,6 +173,11 @@ struct __nested_joined_recv<FinalReceiver, tuple<Values...>, Sender, Senders...>
       [&](auto&&... outer_vals) {
         std::apply(
           [&](auto&& sender, auto&&... rest_senders) {
+            using next_recv_t = __nested_joined_recv<
+              FinalReceiver,
+              tuple<decay_t<decltype(outer_vals)>..., decay_t<InnerVals>...>,
+              Senders...
+            >;
             std::experimental::execution::submit(
               forward<decltype(sender)>(sender),
               next_recv_t(
@@ -184,6 +199,13 @@ struct __nested_joined_recv<FinalReceiver, tuple<Values...>, Sender, Senders...>
 
 };
 
+template <class Property, class FinalReceiver, class... Args>
+  requires requires(FinalReceiver const& fr, Property&& p) { query_impl::query_fn{}(fr, (Property&&) p); }
+auto query(__nested_joined_recv<FinalReceiver, Args...> const& r, Property&& p)
+{
+  return execution::query(r.recv_, (Property&&) p);
+}
+
 template <class Executor, class Error>
 class __impl {
 private:
@@ -202,12 +224,10 @@ public:
   
   template <class... Senders>
   auto make_joined_sender(Senders&&... s) const {
-    return execution::sender(
-      __joined_on_submit_fn<Error, decay_t<Senders>...>{
-        tuple<decay_t<Senders>...>(forward<Senders>(s)...)
-      },
-      [ex_=ex_]() { return ex_; }
-    );
+    return __joined_sender<Executor, Error, decay_t<Senders>...>{
+      tuple<decay_t<Senders>...>(forward<Senders>(s)...),
+      ex_
+    };
   }
 
 };
